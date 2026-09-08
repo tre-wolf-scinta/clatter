@@ -125,6 +125,19 @@ test('character dialog: focus lands in the JSON box, errors are alerts, loading 
   await expect(opener).toBeFocused()
 })
 
+test('a ?character= link loads that file on arrival and it sticks', async ({ page }) => {
+  await page.goto('/?character=characters/persi-obsidian.json')
+  await expect(result(page)).toContainText('Loaded Persi Obsidian, level 5.')
+  await expect(page.getByRole('button', { name: 'Flail +7 to hit' })).toBeVisible()
+  await expect(rollBox(page)).toBeFocused()
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Flail +7 to hit' })).toBeVisible()
+  await page.goto('/?character=characters/nobody.json')
+  await expect(result(page)).toContainText(
+    'Could not load the character from the link: that address did not return a character file.',
+  )
+})
+
 test('character toggles are pressable buttons and typed words', async ({ page }) => {
   await page.getByRole('button', { name: 'Load or edit character' }).click()
   const dialog = page.getByRole('dialog', { name: 'Character' })

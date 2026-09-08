@@ -4,6 +4,8 @@ An accessible dice-rolling companion for online tabletop RPG play, built for a b
 
 D&D 5e rules. Runs entirely in the browser; your character is kept in the browser's local storage.
 
+Live site: https://tre-wolf-scinta.github.io/rollcall/ — open it with `?character=characters/persi-obsidian.json` on the end to load Persi on any device, then bookmark it.
+
 ## Run it
 
 ```
@@ -61,8 +63,10 @@ Everything is optional. The app derives ability modifiers, proficiency bonus, sk
 Set the character to Public on D&D Beyond (sheet menu, Sharing), then:
 
 ```
-npm run import -- https://www.dndbeyond.com/characters/123456789 characters/my-hero.json
+npm run import -- https://www.dndbeyond.com/characters/123456789 public/characters/my-hero.json
 ```
+
+Files under `public/characters/` are published with the site, so a link such as `?character=characters/my-hero.json` loads one on any device. Anyone with the link can read them.
 
 It reads ability scores, proficiencies, expertise, saves, initiative bonuses, weapons (including two-handed versatile damage and magic bonuses), class attacks such as a Beast Barbarian's claws, extra-damage features as custom rolls, and adds a Rage toggle for Barbarians and a Sneak Attack toggle for Rogues. Spells and unarmed strikes are not imported yet. Check the numbers against the sheet once, then load the file in the app.
 
@@ -92,5 +96,6 @@ Extra keys when you need them:
 - `npm test` runs the unit tests for the rolling engine.
 - `npm run test:e2e` runs the Playwright and axe accessibility tests (first time: `npx playwright install chromium`).
 - `npm run check` runs everything.
+- Every push to `main` runs the whole suite in GitHub Actions and, only if it passes, publishes the site to GitHub Pages (`.github/workflows/deploy.yml`).
 
 CLAUDE.md holds the accessibility rules the code is held to.

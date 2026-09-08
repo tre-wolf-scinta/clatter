@@ -170,6 +170,34 @@ export default function App() {
     setAnnouncement((a) => ({ text, nonce: a.nonce + 1 }))
   }, [])
 
+  // A link such as ?character=characters/persi-obsidian.json loads that file on
+  // arrival, so one bookmark sets up a new device without pasting anything.
+  const loadedFromUrl = useRef(false)
+  useEffect(() => {
+    const param = new URLSearchParams(window.location.search).get('character')
+    if (!param || loadedFromUrl.current) return
+    loadedFromUrl.current = true
+    let url: string
+    try {
+      url = new URL(param, window.location.href).toString()
+    } catch {
+      say('The character link is not a valid address.')
+      return
+    }
+    fetch(url)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+        const text = await res.text()
+        // A dev server answers unknown paths with the page itself; say so plainly.
+        if (!text.trim().startsWith('{')) throw new Error('that address did not return a character file')
+        const err = loadCharacter(text)
+        if (err) say(`Could not load the character from the link: ${err}`)
+      })
+      .catch((err: Error) => say(`Could not load the character from the link: ${err.message}.`))
+    // Runs once on arrival; loadCharacter and say only touch stable refs and setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const announceOptions = { breakdown: settings.breakdown }
 
   function finish(next: { state: RollerState; outcome: { text: string; result: unknown } }) {

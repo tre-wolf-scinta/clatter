@@ -2,7 +2,7 @@
 /**
  * Import a D&D Beyond character into Rollcall's JSON.
  *
- *   node scripts/import-ddb.mjs <character id, sheet URL, or saved JSON file> [characters/name.json]
+ *   node scripts/import-ddb.mjs <character id, sheet URL, or saved JSON file> [public/characters/name.json]
  *
  * The character must be set to Public on D&D Beyond (sheet menu > Sharing).
  * Prints the JSON, or writes it to the given file. Things this script cannot
@@ -237,7 +237,7 @@ const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].repla
 if (isMain) {
   const [, , arg, outFile] = process.argv
   if (!arg) {
-    console.error('Usage: node scripts/import-ddb.mjs <character id, sheet URL, or JSON file> [characters/name.json]')
+    console.error('Usage: node scripts/import-ddb.mjs <character id, sheet URL, or JSON file> [public/characters/name.json]')
     process.exit(1)
   }
   try {
