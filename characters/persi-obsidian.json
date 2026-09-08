@@ -1,0 +1,107 @@
+{
+  "name": "Persi Obsidian",
+  "level": 5,
+  "abilities": {
+    "str": 18,
+    "dex": 14,
+    "con": 18,
+    "int": 8,
+    "wis": 10,
+    "cha": 10
+  },
+  "proficiencies": {
+    "skills": [
+      "intimidation",
+      "medicine",
+      "perception",
+      "religion",
+      "stealth",
+      "survival"
+    ],
+    "saves": [
+      "str",
+      "con"
+    ]
+  },
+  "attacks": [
+    {
+      "name": "Flail",
+      "damage": "1d8",
+      "ability": "str",
+      "damageType": "bludgeoning"
+    },
+    {
+      "name": "Warhammer",
+      "damage": "1d8",
+      "ability": "str",
+      "damageType": "bludgeoning"
+    },
+    {
+      "name": "Warhammer (two-handed)",
+      "damage": "1d10",
+      "ability": "str",
+      "damageType": "bludgeoning",
+      "aliases": [
+        "warhammer 2h"
+      ]
+    },
+    {
+      "name": "Bite",
+      "ability": "str",
+      "damage": "1d8",
+      "damageType": "piercing",
+      "aliases": [
+        "form of the beast bite"
+      ]
+    },
+    {
+      "name": "Claws",
+      "ability": "str",
+      "damage": "1d6",
+      "damageType": "slashing",
+      "aliases": [
+        "form of the beast claws"
+      ]
+    },
+    {
+      "name": "Tail",
+      "ability": "str",
+      "damage": "1d8",
+      "damageType": "piercing",
+      "aliases": [
+        "form of the beast tail"
+      ]
+    }
+  ],
+  "custom": [
+    {
+      "name": "Surprise Attack",
+      "dice": "2d6"
+    }
+  ],
+  "toggles": [
+    {
+      "name": "Rage",
+      "damageBonus": 2,
+      "appliesTo": [
+        "Flail",
+        "Warhammer",
+        "Warhammer (two-handed)",
+        "Bite",
+        "Claws",
+        "Tail"
+      ],
+      "aliases": [
+        "raging"
+      ]
+    }
+  ],
+  "source": {
+    "dndBeyond": "https://dndbeyond.com/characters/170496330",
+    "race": "Bugbear",
+    "classes": [
+      "Barbarian 5 (Path of the Beast (TCoE))"
+    ],
+    "importedAt": "2026-09-03"
+  }
+}

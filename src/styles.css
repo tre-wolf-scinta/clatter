@@ -1,0 +1,231 @@
+/* Tokens. Light is the base; dark redefines only the colors. Contrast hand-checked:
+   text 4.5:1 or better, borders and focus rings 3:1 or better, in both themes. */
+:root {
+  color-scheme: light dark;
+  --bg: #f4f4f1;
+  --fg: #171717;
+  --card: #ffffff;
+  --border: #6b6b6b;
+  --accent: #1a4fa3;
+  --accent-fg: #ffffff;
+  --focus: #0b3d91;
+  --muted: #464646;
+  --error: #a80000;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121212;
+    --fg: #f2f2f2;
+    --card: #1e1e1e;
+    --border: #8a8a8a;
+    --accent: #7db2ff;
+    --accent-fg: #000000;
+    --focus: #ffd000;
+    --muted: #c4c4c4;
+    --error: #ff8080;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 112.5%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+}
+
+header,
+main {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+header {
+  padding-top: 1rem;
+}
+
+main {
+  padding-bottom: 3rem;
+}
+
+h1 {
+  font-size: 1.75rem;
+  margin: 0 0 0.25rem;
+}
+
+h2 {
+  font-size: 1.25rem;
+  margin: 1.75rem 0 0.5rem;
+}
+
+p {
+  margin: 0.25rem 0 0.75rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.error {
+  color: var(--error);
+  font-weight: 600;
+}
+
+label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+input[type="text"],
+textarea {
+  width: 100%;
+  font: inherit;
+  color: var(--fg);
+  background: var(--card);
+  border: 2px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+}
+
+input[type="text"] {
+  font-size: 1.5rem;
+}
+
+textarea {
+  min-height: 16rem;
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 0.9rem;
+}
+
+.suggestion {
+  min-height: 1.5rem;
+}
+
+/* The live region. Big, bold, and always in the same place. */
+.result {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.3;
+  min-height: 4.5rem;
+  padding: 1rem 1.25rem;
+  border: 2px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--card);
+  overflow-wrap: anywhere;
+}
+
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.5rem 0 1rem;
+}
+
+button {
+  font: inherit;
+  font-size: 1.2rem;
+  font-weight: 600;
+  min-height: 3.5rem;
+  min-width: 7rem;
+  padding: 0.5rem 1.25rem;
+  color: var(--fg);
+  background: var(--card);
+  border: 2px solid var(--border);
+  border-radius: 0.75rem;
+  cursor: pointer;
+  text-align: center;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+button.primary,
+button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.field {
+  margin: 0.5rem 0 1rem;
+}
+
+.field input[type="checkbox"] {
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: 0 0.5rem 0 0;
+  vertical-align: middle;
+}
+
+.field input[type="checkbox"] + label {
+  display: inline;
+  font-weight: 500;
+}
+
+.history {
+  padding-left: 1.5rem;
+}
+
+.history li {
+  margin: 0.35rem 0;
+}
+
+dialog {
+  width: min(40rem, 92vw);
+  border: 2px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--card);
+  color: var(--fg);
+  padding: 1.5rem;
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+@media (forced-colors: active) {
+  button,
+  input,
+  textarea,
+  .result,
+  dialog {
+    border-color: ButtonText;
+  }
+
+  button.primary,
+  button[aria-pressed="true"] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
