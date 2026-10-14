@@ -1,4 +1,4 @@
-# Rollcall
+# Dice Caller
 
 Accessible dice-rolling companion for online tabletop RPG play (D&D 5e). The player types what the DM asked for — `stealth`, `dex save`, `rapier` — presses Enter, and hears the result at once. Static single-page app: no backend, no accounts; the character lives in localStorage.
 
@@ -9,7 +9,7 @@ The owner and primary user is blind and works with NVDA. Every UI string, and ev
 ## Commands
 
 - `npm install`, then once: `npx playwright install chromium`
-- `npm run dev` — Vite on http://localhost:5173 (`.claude/launch.json` config `rollcall-dev`)
+- `npm run dev` — Vite on http://localhost:5173 (`.claude/launch.json` config `dicecaller-dev`)
 - `npm test` — Vitest unit tests for the engine (deterministic, no DOM)
 - `npm run test:e2e` — Playwright + axe against the real page (starts the dev server itself)
 - `npm run check` — typecheck, unit, e2e. Run this before saying anything works; report failures verbatim.
@@ -47,14 +47,14 @@ The owner and primary user is blind and works with NVDA. Every UI string, and ev
 - `src/App.tsx` and `src/ui/` are a thin React layer over the engine: native HTML, plain CSS with custom properties (`src/styles.css`), no component library, no CSS framework. The UI surface is small enough that native elements cover it; add React Aria only for a widget the platform lacks (combobox, listbox).
 - `tests/e2e/` is Playwright + axe; `playwright.config.ts` starts the dev server.
 - `scripts/import-ddb.mjs` converts a public D&D Beyond character (`npm run import -- <sheet url> public/characters/name.json`) into the JSON schema, including class toggles (Rage, Sneak Attack). `public/characters/` holds the owner's imported characters and is published with the site; a `?character=characters/name.json` link loads one on arrival.
-- Deployment: Render static site `rollcall` (srv-db7tc37f3r2c739b0l40) at https://rollcall-22uk.onrender.com/, built from the `release` branch. `.github/workflows/deploy.yml` runs `npm run check` on every push to `main` and, only on success, force-pushes that commit to `release`, which Render auto-deploys; the same run publishes the GitHub Pages mirror at https://tre-wolf-scinta.github.io/rollcall/. Never push to `release` by hand. `render.yaml` mirrors the service config (`render blueprints validate render.yaml`); the logged-in Render CLI (`render services`, `render deploys list <id>`, `render logs`) is the way to inspect it. `.node-version` pins Node 22 for Render and CI. Vite `base` is `./` so the build works at a root or under a sub-path.
+- Deployment: Render static site `dicecaller` (srv-db7tq9ou01pc7387v0n0) at https://dicecaller.onrender.com/, built from the `release` branch. `.github/workflows/deploy.yml` runs `npm run check` on every push to `main` and, only on success, force-pushes that commit to `release`, which Render auto-deploys; the same run publishes the GitHub Pages mirror at https://tre-wolf-scinta.github.io/dicecaller/. The GitHub repo is `tre-wolf-scinta/dicecaller` (renamed from `rollcall` on 2026-10-14; the local folder is still `C:\Users\tre_s\rollcall`). Never push to `release` by hand. `render.yaml` mirrors the service config (`render blueprints validate render.yaml`); the logged-in Render CLI (`render services`, `render deploys list <id>`, `render logs`) is the way to inspect it. `.node-version` pins Node 22 for Render and CI. Vite `base` is `./` so the build works at a root or under a sub-path.
 - Toggles are attack modifiers that are sticky buttons, standalone words (`rage`), or one-roll words (`flail rage`); the announcement names them: "Flail with Rage: 22 to hit."
 - Randomness: `secureRng` (crypto.getRandomValues) in production; every rolling function takes an injectable `Rng`.
 
 ## Verification loop
 
 1. `npm run check` must pass.
-2. Start the app (`preview_start` with `rollcall-dev`) and drive it: type a command, press Enter, then read the accessibility tree (`read_page`), which is roughly what NVDA consumes. Confirm the Result region text, which element has focus, and the heading and landmark map. Screenshot only to check the visual layer.
+2. Start the app (`preview_start` with `dicecaller-dev`) and drive it: type a command, press Enter, then read the accessibility tree (`read_page`), which is roughly what NVDA consumes. Confirm the Result region text, which element has focus, and the heading and landmark map. Screenshot only to check the visual layer.
 3. Tell the user what the accessibility tree says, not just that tests passed. Real NVDA checks are theirs to run; say which ones you could not do.
 
 ## Conventions

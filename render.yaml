@@ -1,5 +1,5 @@
 # Render Blueprint (https://render.com/docs/blueprint-spec): the static site
-# that serves Rollcall, as created with the Render CLI (see README, Deploying).
+# that serves Dice Caller, as created with the Render CLI (see README, Deploying).
 # Check edits with: render blueprints validate render.yaml
 #
 # The site builds from the release branch. GitHub Actions moves that branch
@@ -8,9 +8,9 @@
 # have not approved.
 services:
   - type: web
-    name: rollcall
+    name: dicecaller
     runtime: static
-    repo: https://github.com/tre-wolf-scinta/rollcall
+    repo: https://github.com/tre-wolf-scinta/dicecaller
     branch: release
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
