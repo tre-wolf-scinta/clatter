@@ -1,10 +1,10 @@
-# Dice Caller
+# Clatter
 
 An accessible dice-rolling companion for online tabletop RPG play, built for a blind player using NVDA. The DM says "give me a Dexterity check"; you type `dex`, press Enter, and hear "Dexterity check: 17. Rolled 13 plus 4." No navigating a character sheet, no hunting for the result.
 
 D&D 5e rules. Runs entirely in the browser; your character is kept in the browser's local storage.
 
-Live site: https://dicecaller.onrender.com/ — open it with `?character=characters/persi-obsidian.json` on the end to load Persi on any device, then bookmark it. A mirror runs at https://tre-wolf-scinta.github.io/dicecaller/. The browser keeps your character and hit points per site, so pick one address and stay with it.
+Live site: https://clatter.onrender.com/ — open it with `?character=characters/persi-obsidian.json` on the end to load Persi on any device, then bookmark it. A mirror runs at https://tre-wolf-scinta.github.io/clatter/. The browser keeps your character and hit points per site, so pick one address and stay with it.
 
 ## Run it
 
@@ -108,6 +108,6 @@ Extra keys when you need them:
 - `npm run test:e2e` runs the Playwright and axe accessibility tests (first time: `npx playwright install chromium`).
 - `npm run check` runs everything.
 - Every push to `main` runs the whole suite in GitHub Actions (`.github/workflows/deploy.yml`). Only if it passes does the workflow move the `release` branch to that commit; Render builds the site from `release` and publishes it at the address above, so a build that fails the accessibility checks never goes live. The same run publishes the GitHub Pages mirror.
-- The Render service was created once from the CLI, with no dashboard: `render services create --name dicecaller --type static_site --repo https://github.com/tre-wolf-scinta/dicecaller --branch release --build-command "npm ci && npm run build" --publish-directory dist`. `render.yaml` describes the same service; `render blueprints validate render.yaml` checks it. `.node-version` pins Node for Render and for CI.
+- The Render service was created once from the CLI, with no dashboard: `render services create --name clatter --type static_site --repo https://github.com/tre-wolf-scinta/clatter --branch release --build-command "npm ci && npm run build" --publish-directory dist`. `render.yaml` describes the same service; `render blueprints validate render.yaml` checks it. `.node-version` pins Node for Render and for CI.
 
 CLAUDE.md holds the accessibility rules the code is held to.

@@ -1,5 +1,5 @@
 # Render Blueprint (https://render.com/docs/blueprint-spec): the static site
-# that serves Dice Caller, as created with the Render CLI (see README, Deploying).
+# that serves Clatter, as created with the Render CLI (see README, Deploying).
 # Check edits with: render blueprints validate render.yaml
 #
 # The site builds from the release branch. GitHub Actions moves that branch
@@ -8,9 +8,9 @@
 # have not approved.
 services:
   - type: web
-    name: dicecaller
+    name: clatter
     runtime: static
-    repo: https://github.com/tre-wolf-scinta/dicecaller
+    repo: https://github.com/tre-wolf-scinta/clatter
     branch: release
     buildCommand: npm ci && npm run build
     staticPublishPath: dist

@@ -33,9 +33,9 @@ import { loadJSON, loadString, saveJSON, saveString } from './storage'
 import { CharacterDialog } from './ui/CharacterDialog'
 import { LiveRegion } from './ui/LiveRegion'
 
-const CHARACTER_KEY = 'dicecaller.character'
-const SETTINGS_KEY = 'dicecaller.settings'
-const hpKey = (name: string): string => `dicecaller.hp.${name}`
+const CHARACTER_KEY = 'clatter.character'
+const SETTINGS_KEY = 'clatter.settings'
+const hpKey = (name: string): string => `clatter.hp.${name}`
 const HISTORY_LIMIT = 100
 const QUICK_DICE = [4, 6, 8, 10, 12, 20, 100]
 
@@ -327,7 +327,7 @@ export default function App() {
   return (
     <>
       <header>
-        <h1>Dice Caller</h1>
+        <h1>Clatter</h1>
         <p className="muted">
           {character.name}, level {character.level}. Proficiency bonus {fmtMod(character.proficiencyBonus)}.
         </p>

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Import a D&D Beyond character into Dice Caller's JSON.
+ * Import a D&D Beyond character into Clatter's JSON.
  *
  *   node scripts/import-ddb.mjs <character id, sheet URL, or saved JSON file> [public/characters/name.json]
  *
