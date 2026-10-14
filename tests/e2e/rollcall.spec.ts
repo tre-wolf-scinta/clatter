@@ -44,7 +44,8 @@ test('attacks are two rolls: to hit, then damage', async ({ page }) => {
   await type(page, 'rapier')
   await expect(result(page)).toContainText(/Rapier: \d+ to hit\. You rolled an? \d+ plus 7 from modifiers\./)
   await type(page, '/d')
-  await expect(result(page)).toContainText(/Rapier: \d+ piercing damage\. You rolled an? \d+ plus 4 from modifiers\./)
+  // A natural 20 on the to-hit makes this a critical by design, so accept either breakdown.
+  await expect(result(page)).toContainText(/Rapier: \d+ piercing damage\. You rolled .*plus 4 from modifiers\./)
 })
 
 test('buttons are named with their modifier and roll from the keyboard', async ({ page }) => {
