@@ -26,6 +26,7 @@ import {
   type RollerState,
 } from './engine/commands'
 import { formatDiceExpr } from './engine/dice'
+import { freshHitPoints, type HitPoints } from './engine/hitpoints'
 import type { Mode } from './engine/roll'
 import { SAMPLE_CHARACTER_JSON } from './engine/sample'
 import { loadJSON, loadString, saveJSON, saveString } from './storage'
@@ -34,14 +35,16 @@ import { LiveRegion } from './ui/LiveRegion'
 
 const CHARACTER_KEY = 'rollcall.character'
 const SETTINGS_KEY = 'rollcall.settings'
+const hpKey = (name: string): string => `rollcall.hp.${name}`
 const HISTORY_LIMIT = 100
 const QUICK_DICE = [4, 6, 8, 10, 12, 20, 100]
 
 interface Settings {
   breakdown: boolean
   assertive: boolean
+  proficientOnly: boolean
 }
-const DEFAULT_SETTINGS: Settings = { breakdown: true, assertive: true }
+const DEFAULT_SETTINGS: Settings = { breakdown: true, assertive: true, proficientOnly: false }
 
 interface HistoryEntry {
   id: number
@@ -61,6 +64,21 @@ function loadCharacterText(): string {
   return SAMPLE_CHARACTER_JSON
 }
 
+/** Hit points for this character on this device: what was saved, if it still matches the file's max. */
+function initialHitPoints(ch: Character): HitPoints | null {
+  if (ch.hitPointsMax === null) return null
+  const raw = loadString(hpKey(ch.name))
+  if (raw) {
+    try {
+      const stored = JSON.parse(raw) as HitPoints
+      if (stored && stored.max === ch.hitPointsMax && Number.isInteger(stored.current)) return stored
+    } catch {
+      // Unreadable: start fresh.
+    }
+  }
+  return freshHitPoints(ch.hitPointsMax)
+}
+
 /** Visual-only hint under the roll box; never announced, so typing stays quiet. */
 function describeSuggestion(input: string, candidates: Candidate[], ch: Character): string {
   const cmd = parseCommand(input)
@@ -71,6 +89,20 @@ function describeSuggestion(input: string, candidates: Candidate[], ch: Characte
       return 'Enter shows help.'
     case 'last':
       return 'Enter repeats the last result.'
+    case 'undo':
+      return 'Enter undoes the last hit point change.'
+    case 'rest':
+      return 'Enter takes a long rest.'
+    case 'hp':
+      return cmd.delta < 0 ? `Enter takes ${-cmd.delta} damage.` : `Enter heals ${cmd.delta}.`
+    case 'hp-set':
+      return 'Enter sets hit points.'
+    case 'hp-status':
+      return 'Enter reads hit points.'
+    case 'temp':
+      return 'Enter sets temporary hit points.'
+    case 'query':
+      return `Enter answers /${cmd.topic}.`
     case 'again':
       return 'Enter rolls the last thing again.'
     case 'dice':
@@ -91,12 +123,13 @@ function describeSuggestion(input: string, candidates: Candidate[], ch: Characte
   }
 }
 
-/** "Rage +2 damage", "Sneak Attack +3d6 damage", "Great Weapon Master -5 to hit, +10 damage". */
+/** "Rage +2 damage", "Shield +2 AC", "Great Weapon Master -5 to hit, +10 damage". */
 function toggleLabel(t: DerivedToggle): string {
   const parts: string[] = []
   if (t.attackBonus) parts.push(`${fmtMod(t.attackBonus)} to hit`)
   if (t.damageBonus) parts.push(`${fmtMod(t.damageBonus)} damage`)
   if (t.damageDice) parts.push(`+${formatDiceExpr(t.damageDice)} damage`)
+  if (t.acBonus) parts.push(`${fmtMod(t.acBonus)} AC`)
   return parts.length ? `${t.name} ${parts.join(', ')}` : t.name
 }
 
@@ -105,13 +138,15 @@ interface GroupProps {
   title: string
   items: Candidate[]
   onRoll: (c: Candidate, e: MouseEvent<HTMLButtonElement>, part: AttackPart | null) => void
+  before?: ReactNode
   children?: ReactNode
 }
 
-function ButtonGroup({ id, title, items, onRoll, children }: GroupProps) {
+function ButtonGroup({ id, title, items, onRoll, before, children }: GroupProps) {
   return (
     <section aria-labelledby={`${id}-h`}>
       <h2 id={`${id}-h`}>{title}</h2>
+      {before}
       <div className="grid">
         {items.map((c) => (
           <Fragment key={c.key}>
@@ -152,6 +187,20 @@ export default function App() {
   useEffect(() => {
     roller.current = { ...roller.current, stickyMode, activeToggles }
   }, [stickyMode, activeToggles])
+
+  // A new character: its hit points for this device, its equipped toggles, and a clean slate.
+  useEffect(() => {
+    const defaults = character.toggles.filter((t) => t.on).map((t) => t.name)
+    roller.current = {
+      ...roller.current,
+      hp: initialHitPoints(character),
+      hpHistory: [],
+      activeToggles: defaults,
+      last: null,
+      pendingCrit: null,
+    }
+    setActiveToggles(defaults)
+  }, [character])
 
   // "/" anywhere outside a text field jumps back to the roll box.
   useEffect(() => {
@@ -203,6 +252,7 @@ export default function App() {
   function finish(next: { state: RollerState; outcome: { text: string; result: unknown } }) {
     roller.current = next.state
     setActiveToggles(next.state.activeToggles)
+    if (next.state.hp) saveJSON(hpKey(character.name), next.state.hp)
     if (next.outcome.result) {
       setHistory((h) => [{ id: nextId.current++, text: next.outcome.text }, ...h].slice(0, HISTORY_LIMIT))
     }
@@ -239,8 +289,6 @@ export default function App() {
       const ch = parseCharacterFile(text)
       setCharacterText(text)
       saveString(CHARACTER_KEY, text)
-      roller.current = { ...roller.current, last: null, activeToggles: [], pendingCrit: null }
-      setActiveToggles([])
       setDialogOpen(false)
       say(`Loaded ${ch.name}, level ${ch.level}.`)
       return null
@@ -263,6 +311,16 @@ export default function App() {
       other: candidates.filter((c) => c.target.kind === 'initiative' || c.target.kind === 'custom'),
     }),
     [candidates],
+  )
+  const proficientSkills = useMemo(
+    () =>
+      groups.skills.filter((c) => {
+        if (c.target.kind !== 'skill') return false
+        const id = c.target.id
+        const s = character.skills.find((x) => x.id === id)
+        return s?.proficiency === 'proficient' || s?.proficiency === 'expertise'
+      }),
+    [groups.skills, character],
   )
   const suggestion = describeSuggestion(input, candidates, character)
 
@@ -343,7 +401,23 @@ export default function App() {
 
         <ButtonGroup id="abilities" title="Ability checks" items={groups.abilities} onRoll={rollCandidate} />
         <ButtonGroup id="saves" title="Saving throws" items={groups.saves} onRoll={rollCandidate} />
-        <ButtonGroup id="skills" title="Skills" items={groups.skills} onRoll={rollCandidate} />
+        <ButtonGroup
+          id="skills"
+          title="Skills"
+          items={settings.proficientOnly ? proficientSkills : groups.skills}
+          onRoll={rollCandidate}
+          before={
+            <div className="field">
+              <input
+                id="skills-proficient"
+                type="checkbox"
+                checked={settings.proficientOnly}
+                onChange={(e) => setSettings({ ...settings, proficientOnly: e.target.checked })}
+              />
+              <label htmlFor="skills-proficient">Show only proficient skills</label>
+            </div>
+          }
+        />
         {groups.attacks.length > 0 && (
           <ButtonGroup id="attacks" title="Attacks" items={groups.attacks} onRoll={rollCandidate} />
         )}
@@ -421,14 +495,23 @@ export default function App() {
           <ul>
             <li>Type what the DM asked for and press Enter: stealth, dex save, rapier, initiative, 2d6+3.</li>
             <li>
-              Attacks: rapier rolls to hit. Then dmg rolls its damage. A natural 20 makes that damage critical on
-              its own; add crit to force it.
+              Attacks: rapier rolls to hit. Then dmg or /d rolls its damage. A natural 20 makes that damage critical
+              on its own; add crit to force it.
+            </li>
+            <li>
+              Hit points: minus 5 takes 5 (temporary hit points go first), plus 7 heals 7, temp 8 sets temporary hit
+              points, hp reads them, undo reverses the last change, long rest resets. Death saves keep their own
+              count.
+            </li>
+            <li>
+              Questions start with a slash: /ac, /passive, /skills, /saves, /attacks, /hp, /status, or a name such as
+              /stealth or /str.
             </li>
             <li>Short forms work: perc, soh, init, hist. If it is ambiguous you are told, never guessed.</li>
             <li>Add adv or dis for advantage or disadvantage. Add +2 or +1d4 for a bonus such as Guidance.</li>
             <li>
-              Toggles such as Rage: press the button to keep it on, type rage to switch it, or add it to one roll:
-              flail rage.
+              Toggles such as Rage or a shield: press the button to keep it on, type rage to switch it, or add it to
+              one roll: flail rage. Equipped items start on.
             </li>
             <li>Press Enter on the empty box to roll the last thing again. Type last to hear the last result again.</li>
             <li>Press slash anywhere to jump back to the roll box. Escape clears it.</li>

@@ -96,12 +96,31 @@
       ]
     }
   ],
+  "hitPoints": {
+    "max": 60
+  },
+  "armorClass": {
+    "parts": [
+      {
+        "name": "unarmored defense",
+        "value": 10
+      },
+      {
+        "name": "Dexterity",
+        "value": 2
+      },
+      {
+        "name": "Constitution",
+        "value": 4
+      }
+    ]
+  },
   "source": {
     "dndBeyond": "https://dndbeyond.com/characters/170496330",
     "race": "Bugbear",
     "classes": [
       "Barbarian 5 (Path of the Beast (TCoE))"
     ],
-    "importedAt": "2026-09-03"
+    "importedAt": "2026-09-09"
   }
 }

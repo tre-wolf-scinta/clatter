@@ -34,12 +34,16 @@ The owner and primary user is blind and works with NVDA. Every UI string, and ev
 - Digits for numbers, words for operators (plus, minus, and), articles before dice ("a 5", "an 8"). No symbols, no parentheses, no abbreviations NVDA would spell out.
 - The first sentence must stand alone; the second is a setting. Never jam several facts into one sentence (the owner's feedback, 2026-09-08).
 - Enter on the empty box rolls the last thing again (Extra Attack, repeated saves); `last` re-speaks the last result without rolling.
+- Typing rules: flags start with `/` (`/a` to hit, `/d` damage); a bare signed number is hit points (`-5` damage, `+7` healing); a slash word is a question that never rolls (`/ac`, `/passive`, `/skills`, `/stealth`, `/str`, `/hp`, `/status`).
+- Hit point sentences: "Took 5. Temporary hit points used up. 43 of 45 hit points." "Healed 7. You are up. 7 of 45 hit points." "Took 12. 0 of 45 hit points. You are down." Death saves append the tally: "That is two failures." Undo says what it restored.
+- Readouts: number first, status second. "Stealth plus 5, proficient." "Armor class 18: unarmored defense 10, Dexterity plus 2, Constitution plus 4, plus 2 from Shield. Shield spell is off." `/skills` lists proficient skills only (the owner's call: non-proficient ones carry no information).
 - Ambiguity is reported, never guessed: "Ambiguous: Perception, Performance, or Persuasion. Type more letters."
 - No metadata (timestamps, ids, dice notation) unless the user rolled raw dice.
 
 ## Architecture
 
-- `src/engine/` is pure TypeScript with no DOM: `dice.ts` (expressions, RNG), `character.ts` (forgiving JSON schema to derived modifiers), `roll.ts` (d20 mechanics), `commands.ts` (parser, matcher, execution, button lists), `announce.ts` (phrasing), `sample.ts`. Every behavior change here gets a Vitest test; dice are scripted with `queueRng`.
+- `src/engine/` is pure TypeScript with no DOM: `dice.ts` (expressions, RNG), `character.ts` (forgiving JSON schema to derived modifiers, including hit point max, armor class parts, and toggles with `acBonus` and `on`), `candidates.ts` (everything rollable plus the matcher), `roll.ts` (d20 mechanics), `hitpoints.ts` (damage, healing, temporary hit points, death save tally, with their sentences), `readouts.ts` (slash answers), `commands.ts` (parser, state, execution), `announce.ts` (roll phrasing), `sample.ts`. Every behavior change here gets a Vitest test; dice are scripted with `queueRng`.
+- Session state (`RollerState` in `commands.ts`): sticky mode, active toggles, last roll, pending critical, hit points with an undo history. The app persists hit points per character name in localStorage and seeds active toggles from the character's `on` toggles.
 - `src/App.tsx` and `src/ui/` are a thin React layer over the engine: native HTML, plain CSS with custom properties (`src/styles.css`), no component library, no CSS framework. The UI surface is small enough that native elements cover it; add React Aria only for a widget the platform lacks (combobox, listbox).
 - `tests/e2e/` is Playwright + axe; `playwright.config.ts` starts the dev server.
 - `scripts/import-ddb.mjs` converts a public D&D Beyond character (`npm run import -- <sheet url> public/characters/name.json`) into the JSON schema, including class toggles (Rage, Sneak Attack). `public/characters/` holds the owner's imported characters and is published with the site; a `?character=characters/name.json` link loads one on arrival.

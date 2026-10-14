@@ -43,7 +43,7 @@ test('ambiguous input is reported, not guessed', async ({ page }) => {
 test('attacks are two rolls: to hit, then damage', async ({ page }) => {
   await type(page, 'rapier')
   await expect(result(page)).toContainText(/Rapier: \d+ to hit\. You rolled an? \d+ plus 7 from modifiers\./)
-  await type(page, 'dmg')
+  await type(page, '/d')
   await expect(result(page)).toContainText(/Rapier: \d+ piercing damage\. You rolled an? \d+ plus 4 from modifiers\./)
 })
 
@@ -136,6 +136,38 @@ test('a ?character= link loads that file on arrival and it sticks', async ({ pag
   await expect(result(page)).toContainText(
     'Could not load the character from the link: that address did not return a character file.',
   )
+})
+
+test('hit points: a bare signed number, slash questions, undo, and it survives a reload', async ({ page }) => {
+  await page.goto('/?character=characters/persi-obsidian.json')
+  await expect(result(page)).toContainText('Loaded Persi Obsidian, level 5.')
+  await type(page, '-5')
+  await expect(result(page)).toContainText('Took 5. 55 of 60 hit points.')
+  await type(page, '/ac')
+  await expect(result(page)).toContainText('Armor class 16: unarmored defense 10, Dexterity plus 2, Constitution plus 4.')
+  await type(page, '/stealth')
+  await expect(result(page)).toContainText('Stealth plus 5, proficient.')
+  await type(page, '/status')
+  await expect(result(page)).toContainText('55 of 60 hit points. No toggles on.')
+  await page.goto('/')
+  await type(page, 'hp')
+  await expect(result(page)).toContainText('55 of 60 hit points.')
+  await type(page, 'undo')
+  await expect(result(page)).toContainText('Nothing to undo.')
+  await type(page, '+5')
+  await expect(result(page)).toContainText('Healed 5. 60 of 60 hit points.')
+})
+
+test('the skills list can be narrowed to proficient skills', async ({ page }) => {
+  const box = page.getByRole('checkbox', { name: 'Show only proficient skills' })
+  await expect(box).not.toBeChecked()
+  await expect(page.getByRole('button', { name: 'Athletics +0' })).toBeVisible()
+  await box.check()
+  await expect(page.getByRole('button', { name: 'Athletics +0' })).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Stealth +10' })).toBeVisible()
+  await expectNoAxeViolations(page, 'proficient skills only')
+  await box.uncheck()
+  await expect(page.getByRole('button', { name: 'Athletics +0' })).toBeVisible()
 })
 
 test('character toggles are pressable buttons and typed words', async ({ page }) => {

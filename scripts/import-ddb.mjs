@@ -113,6 +113,42 @@ export function convert(c) {
   }
   const strMod = abilityMod(abilities.str)
   const dexMod = abilityMod(abilities.dex)
+  const conMod = abilityMod(abilities.con)
+
+  const hitPointsMax =
+    c.overrideHitPoints ??
+    (c.baseHitPoints ?? 0) +
+      (c.bonusHitPoints ?? 0) +
+      conMod * level +
+      sum('bonus', 'hit-points-per-level') * level +
+      sum('bonus', 'hit-points')
+
+  // Armor class: the equipped armor (or the unarmored formula) plus Dexterity as the armor allows,
+  // plus flat bonuses. Shields become toggles that start on when equipped.
+  const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1)
+  const acParts = []
+  const wornArmor = (c.inventory ?? []).find(
+    (it) => it.equipped && it.definition.filterType === 'Armor' && it.definition.armorTypeId >= 1 && it.definition.armorTypeId <= 3,
+  )
+  if (wornArmor) {
+    const d = wornArmor.definition
+    acParts.push({ name: d.name, value: d.armorClass ?? 10 })
+    if (d.armorTypeId === 1) acParts.push({ name: 'Dexterity', value: dexMod })
+    else if (d.armorTypeId === 2) acParts.push({ name: 'Dexterity', value: Math.min(2, dexMod) })
+  } else {
+    const unarmored = mods.find((m) => m.type === 'set' && m.subType === 'unarmored-armor-class')
+    acParts.push({ name: unarmored ? 'unarmored defense' : 'unarmored', value: unarmored?.value ?? 10 })
+    acParts.push({ name: 'Dexterity', value: dexMod })
+    const extraAbility = unarmored?.statId ? ABILITY[unarmored.statId] : null
+    if (extraAbility && extraAbility !== 'dex') {
+      acParts.push({ name: capitalize(ABILITY_WORD[extraAbility]), value: abilityMod(abilities[extraAbility]) })
+    }
+  }
+  for (const m of mods) {
+    if (m.type !== 'bonus' || m.subType !== 'armor-class' || !m.value) continue
+    const item = (c.inventory ?? []).find((it) => it.definition.id === m.componentId)
+    acParts.push({ name: item ? item.definition.name : 'other bonus', value: m.value })
+  }
 
   const skills = SKILLS.filter((s) => has('proficiency', s))
   const expertise = SKILLS.filter((s) => has('expertise', s))
@@ -200,6 +236,10 @@ export function convert(c) {
   if (rogue) {
     toggles.push({ name: 'Sneak Attack', damageDice: `${Math.ceil(rogue.level / 2)}d6`, aliases: ['sneak', 'sa'] })
   }
+  for (const it of c.inventory ?? []) {
+    const d = it.definition
+    if (d.armorTypeId === 4) toggles.push({ name: d.name, acBonus: d.armorClass ?? 2, on: it.equipped || undefined })
+  }
 
   return prune({
     name: c.name,
@@ -211,6 +251,8 @@ export function convert(c) {
     attacks,
     custom,
     toggles,
+    hitPoints: hitPointsMax > 0 ? { max: hitPointsMax } : undefined,
+    armorClass: { parts: acParts },
     source: {
       dndBeyond: c.readonlyUrl ?? `https://www.dndbeyond.com/characters/${c.id}`,
       race: c.race?.fullName,

@@ -145,6 +145,8 @@ describe('toggles', () => {
       attackBonus: 0,
       damageBonus: 2,
       damageDice: null,
+      acBonus: 0,
+      on: false,
       appliesTo: ['flail'],
       aliases: ['raging'],
     })
@@ -158,5 +160,27 @@ describe('toggles', () => {
   it('rejects toggles without a name or with bad dice', () => {
     expect(() => parseCharacterFile('{"toggles":[{"damageBonus":2}]}')).toThrowError(/toggles\[1\]: every toggle needs a name/)
     expect(() => parseCharacterFile('{"toggles":[{"name":"Bless","damageDice":"lots"}]}')).toThrowError(/Bless.*damageDice must be dice/)
+  })
+})
+
+describe('hit points, armor class, and equipped toggles', () => {
+  it('reads the max, the armor class parts, and which toggles start on', () => {
+    const ch = deriveCharacter({
+      hitPoints: { max: 60 },
+      armorClass: { parts: [{ name: 'unarmored defense', value: 10 }, { name: 'Dexterity', value: 2 }] },
+      toggles: [{ name: 'Shield', acBonus: 2, on: true }, { name: 'Rage', damageBonus: 2 }],
+    })
+    expect(ch.hitPointsMax).toBe(60)
+    expect(ch.armorClass).toEqual([{ name: 'unarmored defense', value: 10 }, { name: 'Dexterity', value: 2 }])
+    expect(ch.toggles[0]).toMatchObject({ acBonus: 2, on: true })
+    expect(ch.toggles[1]).toMatchObject({ acBonus: 0, on: false })
+    expect(deriveCharacter({}).hitPointsMax).toBeNull()
+    expect(deriveCharacter({}).armorClass).toBeNull()
+  })
+
+  it('rejects bad hit points and armor class', () => {
+    expect(() => parseCharacterFile('{"hitPoints":{"max":0}}')).toThrowError(/hitPoints.max/)
+    expect(() => parseCharacterFile('{"armorClass":{"parts":[]}}')).toThrowError(/armorClass.parts/)
+    expect(() => parseCharacterFile('{"armorClass":{"parts":[{"value":10}]}}')).toThrowError(/parts\[1\]: every part needs a name/)
   })
 })

@@ -101,8 +101,15 @@ export interface CharacterFile {
   attacks?: AttackFile[]
   /** Named dice expressions: Healing Word 1d4+3, Fireball 8d6, Surprise Attack 2d6. */
   custom?: { name: string; dice: string; aliases?: string[] }[]
-  /** Switchable attack modifiers: Rage +2 damage, Sneak Attack +3d6, Great Weapon Master -5 to hit +10 damage. */
+  /** Switchable modifiers: Rage +2 damage, Sneak Attack +3d6, a shield +2 AC, the Shield spell +5 AC. */
   toggles?: ToggleFile[]
+  /** Maximum hit points. Current hit points are tracked in the app, per device. */
+  hitPoints?: { max: number }
+  /**
+   * What makes up armor class before toggles, in the order it is spoken:
+   * [{ "name": "unarmored defense", "value": 10 }, { "name": "Dexterity", "value": 2 }].
+   */
+  armorClass?: { parts: { name: string; value: number }[] }
   /** Your own shortcuts, for example { "hide": "stealth" }. */
   aliases?: Record<string, string>
 }
@@ -115,10 +122,19 @@ export interface ToggleFile {
   damageBonus?: number
   /** Extra damage dice while on, like "3d6". Doubled on a critical hit like any damage dice. */
   damageDice?: string
+  /** Added to armor class while on: a shield, the Shield spell, a potion. */
+  acBonus?: number
+  /** Starts switched on, for an equipped item. Default off. */
+  on?: boolean
   /** Attack names or aliases this applies to. Leave out for every attack. */
   appliesTo?: string[]
   /** Extra words that switch it: "raging", "sneak". */
   aliases?: string[]
+}
+
+export interface ArmorClassPart {
+  name: string
+  value: number
 }
 
 export interface AttackFile {
@@ -184,10 +200,17 @@ export interface DerivedToggle {
   attackBonus: number
   damageBonus: number
   damageDice: DiceExpr | null
+  acBonus: number
+  /** Starts switched on. */
+  on: boolean
   /** Normalized attack names or aliases; null means every attack. */
   appliesTo: string[] | null
   aliases: string[]
 }
+
+/** True when the toggle changes attack rolls or damage (as opposed to only armor class). */
+export const affectsAttacks = (t: DerivedToggle): boolean =>
+  t.attackBonus !== 0 || t.damageBonus !== 0 || t.damageDice !== null
 
 export interface Character {
   name: string
@@ -200,6 +223,10 @@ export interface Character {
   attacks: DerivedAttack[]
   custom: DerivedCustom[]
   toggles: DerivedToggle[]
+  /** Null when the file gives no hit points. */
+  hitPointsMax: number | null
+  /** Null when the file gives no armor class. */
+  armorClass: ArmorClassPart[] | null
   aliases: Record<string, string>
 }
 
@@ -412,6 +439,8 @@ export function deriveCharacter(file: CharacterFile): Character {
       attackBonus: numberOr(t.attackBonus, 0, `${context}.attackBonus`),
       damageBonus: numberOr(t.damageBonus, 0, `${context}.damageBonus`),
       damageDice,
+      acBonus: numberOr(t.acBonus, 0, `${context}.acBonus`),
+      on: t.on === true,
       appliesTo:
         t.appliesTo === undefined || t.appliesTo === null
           ? null
@@ -426,6 +455,28 @@ export function deriveCharacter(file: CharacterFile): Character {
     aliases[normName(k)] = normName(v)
   }
 
+  let hitPointsMax: number | null = null
+  if (file.hitPoints !== undefined && file.hitPoints !== null) {
+    const max = numberOr(file.hitPoints.max, NaN, 'hitPoints.max')
+    if (!Number.isInteger(max) || max < 1) throw new CharacterError('hitPoints.max: expected a whole number of 1 or more.')
+    hitPointsMax = max
+  }
+
+  let armorClass: ArmorClassPart[] | null = null
+  if (file.armorClass !== undefined && file.armorClass !== null) {
+    const parts = file.armorClass.parts
+    if (!Array.isArray(parts) || parts.length === 0) {
+      throw new CharacterError('armorClass.parts: expected a list like [{ "name": "unarmored defense", "value": 10 }].')
+    }
+    armorClass = parts.map((p, i) => {
+      if (!p || typeof p !== 'object' || typeof p.name !== 'string' || !p.name.trim()) {
+        throw new CharacterError(`armorClass.parts[${i + 1}]: every part needs a name.`)
+      }
+      return { name: p.name.trim(), value: numberOr(p.value, NaN, `armorClass.parts[${i + 1}].value`) }
+    })
+    if (armorClass.some((p) => !Number.isFinite(p.value))) throw new CharacterError('armorClass.parts: every part needs a value.')
+  }
+
   return {
     name: typeof file.name === 'string' && file.name.trim() ? file.name.trim() : 'Unnamed character',
     level,
@@ -437,6 +488,8 @@ export function deriveCharacter(file: CharacterFile): Character {
     attacks,
     custom,
     toggles,
+    hitPointsMax,
+    armorClass,
     aliases,
   }
 }

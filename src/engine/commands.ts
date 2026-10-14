@@ -1,9 +1,23 @@
 /**
- * The command box: parse what the player typed, match it against the character,
- * roll, and produce the sentence to announce. Also builds the button lists.
+ * The command box: parse what the player typed, roll or answer, and produce the
+ * sentence to announce. Rolling lives in roll.ts, matching in candidates.ts,
+ * hit points in hitpoints.ts, slash answers in readouts.ts.
  */
-import { ABILITIES, ABILITY_NAMES, SKILLS, toggleApplies, type Ability, type Character, type SkillId } from './character'
-import { type DiceExpr, type Rng, addExpr, formatDiceExpr, parseDiceExpr, secureRng } from './dice'
+import { affectsAttacks, toggleApplies, type Character } from './character'
+import { allCandidates, isSaveTarget, listOr, matchQuery, norm, type Candidate } from './candidates'
+import { type DiceExpr, type Rng, addExpr, parseDiceExpr, secureRng } from './dice'
+import {
+  describeHp,
+  heal,
+  longRest,
+  recordDeathSave,
+  setCurrent,
+  setTemp,
+  takeDamage,
+  type HitPoints,
+  type HpChange,
+} from './hitpoints'
+import { NO_HP, answerQuery } from './readouts'
 import {
   type AttackEffect,
   type Mode,
@@ -16,147 +30,8 @@ import {
 } from './roll'
 import { type AnnounceOptions, announce } from './announce'
 
-export type Target =
-  | { kind: 'ability'; ability: Ability }
-  | { kind: 'skill'; id: SkillId }
-  | { kind: 'save'; ability: Ability }
-  | { kind: 'initiative' }
-  | { kind: 'death-save' }
-  | { kind: 'attack'; index: number }
-  | { kind: 'custom'; index: number }
-
-export interface Candidate {
-  key: string
-  /** Short display name: "Stealth", "Dexterity save". */
-  name: string
-  /** What the announcement calls it: "Stealth check", "Dexterity save". */
-  label: string
-  /** Button text: "Stealth +10", "Flail +7 to hit". */
-  buttonLabel: string
-  /** Attacks only: the damage button, "Flail damage 1d8+4 bludgeoning". */
-  damageLabel?: string
-  /** Everything a player might type for it, lowercased. */
-  names: string[]
-  target: Target
-}
-
-export const fmtMod = (n: number): string => (n >= 0 ? `+${n}` : `${n}`)
-
-export const isSaveTarget = (c: Candidate): boolean => c.target.kind === 'save' || c.target.kind === 'death-save'
-
-export function allCandidates(ch: Character): Candidate[] {
-  const out: Candidate[] = []
-  for (const a of ABILITIES) {
-    const name = ABILITY_NAMES[a]
-    out.push({
-      key: `ability:${a}`,
-      name,
-      label: `${name} check`,
-      buttonLabel: `${name} ${fmtMod(ch.abilities[a].checkModifier)}`,
-      names: [name.toLowerCase(), a],
-      target: { kind: 'ability', ability: a },
-    })
-  }
-  for (const s of ch.skills) {
-    const def = SKILLS.find((d) => d.id === s.id)
-    out.push({
-      key: `skill:${s.id}`,
-      name: s.name,
-      label: `${s.name} check`,
-      buttonLabel: `${s.name} ${fmtMod(s.modifier)}`,
-      names: [s.name.toLowerCase(), ...(def?.aliases ?? [])],
-      target: { kind: 'skill', id: s.id },
-    })
-  }
-  for (const s of ch.saves) {
-    out.push({
-      key: `save:${s.ability}`,
-      name: `${s.name} save`,
-      label: `${s.name} save`,
-      buttonLabel: `${s.name} save ${fmtMod(s.modifier)}`,
-      names: [s.name.toLowerCase(), s.ability],
-      target: { kind: 'save', ability: s.ability },
-    })
-  }
-  out.push({
-    key: 'initiative',
-    name: 'Initiative',
-    label: 'Initiative',
-    buttonLabel: `Initiative ${fmtMod(ch.initiative)}`,
-    names: ['initiative', 'init'],
-    target: { kind: 'initiative' },
-  })
-  out.push({
-    key: 'death-save',
-    name: 'Death save',
-    label: 'Death save',
-    buttonLabel: 'Death save',
-    names: ['death save', 'death', 'ds', 'death saving throw'],
-    target: { kind: 'death-save' },
-  })
-  ch.attacks.forEach((a, index) => {
-    const type = a.damageType ? ` ${a.damageType}` : ''
-    out.push({
-      key: `attack:${index}`,
-      name: a.name,
-      label: a.name,
-      buttonLabel: `${a.name} ${fmtMod(a.toHit)} to hit`,
-      damageLabel: `${a.name} damage ${formatDiceExpr(a.damage)}${type}`,
-      names: [a.name.toLowerCase(), ...a.aliases],
-      target: { kind: 'attack', index },
-    })
-  })
-  ch.custom.forEach((c, index) => {
-    out.push({
-      key: `custom:${index}`,
-      name: c.name,
-      label: c.name,
-      buttonLabel: `${c.name} ${formatDiceExpr(c.dice)}`,
-      names: [c.name.toLowerCase(), ...c.aliases],
-      target: { kind: 'custom', index },
-    })
-  })
-  return out
-}
-
-export type Match =
-  | { kind: 'match'; candidate: Candidate }
-  | { kind: 'ambiguous'; candidates: Candidate[] }
-  | { kind: 'none' }
-
-const norm = (s: string): string => s.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim()
-
-/** Exact name or alias beats prefix beats substring. Ties are reported, never guessed. */
-export function matchQuery(rawQuery: string, pool: Candidate[], aliases: Record<string, string> = {}): Match {
-  let q = norm(rawQuery)
-  if (aliases[q]) q = norm(aliases[q])
-  if (!q) return { kind: 'none' }
-  const score = (c: Candidate): number => {
-    let best = 0
-    for (const raw of c.names) {
-      const n = norm(raw)
-      if (n === q) best = Math.max(best, 3)
-      else if (n.startsWith(q)) best = Math.max(best, 2)
-      else if (n.includes(q)) best = Math.max(best, 1)
-    }
-    return best
-  }
-  let top = 0
-  let hits: Candidate[] = []
-  for (const c of pool) {
-    const s = score(c)
-    if (s === 0) continue
-    if (s > top) {
-      top = s
-      hits = [c]
-    } else if (s === top) {
-      hits.push(c)
-    }
-  }
-  if (hits.length === 0) return { kind: 'none' }
-  if (hits.length === 1) return { kind: 'match', candidate: hits[0] }
-  return { kind: 'ambiguous', candidates: hits }
-}
+export { allCandidates, fmtMod, isSaveTarget, matchQuery } from './candidates'
+export type { Candidate, Match, Target } from './candidates'
 
 /** Which half of an attack: the roll to hit, or the damage. */
 export type AttackPart = 'attack' | 'damage'
@@ -165,6 +40,15 @@ export type Command =
   | { kind: 'empty' }
   | { kind: 'help' }
   | { kind: 'last' }
+  | { kind: 'undo' }
+  | { kind: 'rest' }
+  /** A bare signed number: -5 takes damage, +7 heals. */
+  | { kind: 'hp'; delta: number }
+  | { kind: 'hp-set'; value: number }
+  | { kind: 'hp-status' }
+  | { kind: 'temp'; value: number | null }
+  /** A slash question: /ac, /passive, /stealth. */
+  | { kind: 'query'; topic: string }
   | { kind: 'again'; mode: Mode | null; bonus: DiceExpr | null; part: AttackPart | null }
   | { kind: 'dice'; expr: DiceExpr }
   | {
@@ -185,8 +69,9 @@ const MODE_WORDS: Record<string, Mode> = {
   disadvantage: 'disadvantage',
 }
 const SAVE_WORDS = new Set(['save', 'saving', 'saves'])
-const DAMAGE_WORDS = new Set(['dmg', 'damage', '-d'])
-const ATTACK_WORDS = new Set(['attack', 'hit', '-a'])
+const DAMAGE_WORDS = new Set(['dmg', 'damage', '/d'])
+const ATTACK_WORDS = new Set(['attack', 'hit', '/a'])
+const FLAGS = new Set(['/a', '/d'])
 const CRIT_WORDS = new Set(['crit', 'critical'])
 const AGAIN_WORDS = new Set(['again', 'redo', 'reroll'])
 const LAST_WORDS = new Set(['last', 'repeat', 'result'])
@@ -194,10 +79,24 @@ const LAST_WORDS = new Set(['last', 'repeat', 'result'])
 const FILLER = new Set(['check', 'throw', 'roll', 'the', 'a', 'an', 'my', 'me', 'give', 'make', 'for', 'please', 'to', 'with'])
 
 export function parseCommand(input: string): Command {
-  const tokens = input.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const raw = input.trim()
+  if (/^[+-]\d+$/.test(raw)) return { kind: 'hp', delta: Number(raw) }
+  const tokens = raw.toLowerCase().split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return { kind: 'empty' }
-  if (tokens.length === 1 && (tokens[0] === 'help' || tokens[0] === '?')) return { kind: 'help' }
-  if (tokens.length === 1 && LAST_WORDS.has(tokens[0])) return { kind: 'last' }
+  const [first, ...rest] = tokens
+  if (first.startsWith('/') && !FLAGS.has(first)) {
+    const topic = [first.slice(1), ...rest].join(' ').trim()
+    return topic === '' || topic === 'help' ? { kind: 'help' } : { kind: 'query', topic }
+  }
+  if (tokens.length === 1 && (first === 'help' || first === '?')) return { kind: 'help' }
+  if (tokens.length === 1 && LAST_WORDS.has(first)) return { kind: 'last' }
+  if (tokens.length === 1 && first === 'undo') return { kind: 'undo' }
+  if ((tokens.length === 1 && first === 'rest') || (tokens.length === 2 && first === 'long' && rest[0] === 'rest')) {
+    return { kind: 'rest' }
+  }
+  if (first === 'temp' && tokens.length <= 2) return { kind: 'temp', value: rest.length ? Number(rest[0]) : null }
+  if (first === 'hp' && tokens.length <= 2) return rest.length ? { kind: 'hp-set', value: Number(rest[0]) } : { kind: 'hp-status' }
+
   let mode: Mode | null = null
   let bonus: DiceExpr | null = null
   let part: AttackPart | null = null
@@ -285,7 +184,7 @@ export function executeResolved(r: Resolved, ch: Character, opts: AnnounceOption
       const attack = ch.attacks[t.index]
       if (!attack) return { text: 'That attack is no longer on this character.', result: null }
       const effects: AttackEffect[] = ch.toggles
-        .filter((tg) => r.toggles.includes(tg.name) && toggleApplies(tg, attack))
+        .filter((tg) => affectsAttacks(tg) && r.toggles.includes(tg.name) && toggleApplies(tg, attack))
         .map((tg) => ({ name: tg.name, attackBonus: tg.attackBonus, damageBonus: tg.damageBonus, damageDice: tg.damageDice }))
       result =
         r.part === 'damage'
@@ -306,13 +205,17 @@ export function executeResolved(r: Resolved, ch: Character, opts: AnnounceOption
 export interface RollerState {
   /** Mode applied when the command does not say adv or dis. */
   stickyMode: Mode
-  /** Toggles switched on until switched off: Rage, Sneak Attack. */
+  /** Toggles switched on until switched off: Rage, Sneak Attack, an equipped shield. */
   activeToggles: string[]
   last: Resolved | null
   /** Last announced roll, for "say that again". */
   lastText: string | null
   /** Attack whose last roll to hit was a natural 20 and whose damage has not been rolled yet. */
   pendingCrit: string | null
+  /** Null when the character file gives no hit points. */
+  hp: HitPoints | null
+  /** Previous hit point states, newest first, for undo. */
+  hpHistory: HitPoints[]
 }
 
 export const initialRollerState = (): RollerState => ({
@@ -321,7 +224,17 @@ export const initialRollerState = (): RollerState => ({
   last: null,
   lastText: null,
   pendingCrit: null,
+  hp: null,
+  hpHistory: [],
 })
+
+const HP_HISTORY_LIMIT = 20
+
+function withHp(state: RollerState, hp: HitPoints): RollerState {
+  if (hp === state.hp) return state
+  const history = state.hp ? [state.hp, ...state.hpHistory].slice(0, HP_HISTORY_LIMIT) : state.hpHistory
+  return { ...state, hp, hpHistory: history }
+}
 
 /** Pulls toggle words out of a query: "flail rage" becomes query "flail" with toggles ["Rage"]. */
 export function extractToggles(query: string, ch: Character): { query: string; toggles: string[] } {
@@ -349,8 +262,8 @@ function indexOfRun(words: string[], needle: string[]): number {
 
 /**
  * Rolls a resolved command and carries its consequences into the state: the last
- * roll (for Enter and again), the last text (for last), and a pending critical,
- * so damage rolled after a natural 20 is critical without the player saying so.
+ * roll (for Enter and again), the last text (for last), a pending critical so
+ * damage after a natural 20 is critical on its own, and the death save tally.
  */
 export function performRoll(
   state: RollerState,
@@ -371,22 +284,26 @@ export function performRoll(
   }
   const outcome = executeResolved(resolved, ch, opts, rng)
   if (!outcome.result) return { state, outcome }
-  let pendingCrit = state.pendingCrit
-  if (outcome.result.kind === 'attack') pendingCrit = outcome.result.d20.natural20 ? outcome.result.label : null
-  else if (outcome.result.kind === 'damage') pendingCrit = null
-  return { state: { ...state, last: resolved, lastText: outcome.text, pendingCrit }, outcome }
+  let next: RollerState = { ...state, last: resolved }
+  let text = outcome.text
+  if (outcome.result.kind === 'attack') next.pendingCrit = outcome.result.d20.natural20 ? outcome.result.label : null
+  else if (outcome.result.kind === 'damage') next.pendingCrit = null
+  else if (outcome.result.kind === 'death-save' && state.hp) {
+    const change = recordDeathSave(state.hp, outcome.result.outcome)
+    if (change.text) text = `${text} ${change.text}`
+    next = withHp(next, change.hp)
+  }
+  next = { ...next, lastText: text }
+  return { state: next, outcome: { text, result: outcome.result } }
 }
 
 export const HELP_TEXT =
   'Type what to roll and press Enter. Examples: stealth. dex save. rapier. 2d6+3. ' +
-  'Attacks roll to hit; then type dmg for the damage. A natural 20 makes that damage critical on its own. ' +
-  'Add adv or dis for advantage or disadvantage. Add +2 or +1d4 for bonuses. ' +
-  'Press Enter on the empty box to roll the last thing again. Type last to hear the last result again.'
-
-function listOr(names: string[]): string {
-  if (names.length <= 2) return names.join(' or ')
-  return `${names.slice(0, -1).join(', ')}, or ${names[names.length - 1]}`
-}
+  'Attacks roll to hit; then type dmg or slash d for the damage. A natural 20 makes that damage critical on its own. ' +
+  'Add adv or dis for advantage or disadvantage, +2 or +1d4 for bonuses. ' +
+  'Hit points: minus 5 takes 5, plus 7 heals 7, temp 8 sets temporary hit points, undo reverses, long rest resets. ' +
+  'Questions start with a slash: /ac, /passive, /skills, /saves, /attacks, /hp, /status, or /stealth for one skill. ' +
+  'Enter on the empty box rolls the last thing again; last repeats the result.'
 
 export function runCommand(
   input: string,
@@ -397,6 +314,7 @@ export function runCommand(
 ): { state: RollerState; outcome: Outcome } {
   const cmd = parseCommand(input)
   const message = (text: string) => ({ state, outcome: { text, result: null } })
+  const applyHp = (change: HpChange) => ({ state: withHp(state, change.hp), outcome: { text: change.text, result: null } })
   switch (cmd.kind) {
     case 'empty':
       if (!state.last) return message('Nothing rolled yet. Type a skill, ability, or attack and press Enter.')
@@ -405,6 +323,41 @@ export function runCommand(
       return message(HELP_TEXT)
     case 'last':
       return message(state.lastText ?? 'Nothing rolled yet.')
+    case 'hp':
+      if (!state.hp) return message(NO_HP)
+      return applyHp(cmd.delta < 0 ? takeDamage(state.hp, -cmd.delta) : heal(state.hp, cmd.delta))
+    case 'hp-set':
+      if (!state.hp) return message(NO_HP)
+      return applyHp(setCurrent(state.hp, cmd.value))
+    case 'hp-status':
+      return message(state.hp ? describeHp(state.hp) : NO_HP)
+    case 'temp':
+      if (!state.hp) return message(NO_HP)
+      if (cmd.value === null) {
+        return message(state.hp.temp ? `${state.hp.temp} temporary hit points.` : 'No temporary hit points.')
+      }
+      return applyHp(setTemp(state.hp, cmd.value))
+    case 'undo': {
+      if (!state.hp) return message(NO_HP)
+      const [previous, ...older] = state.hpHistory
+      if (!previous) return message('Nothing to undo.')
+      return {
+        state: { ...state, hp: previous, hpHistory: older },
+        outcome: { text: `Undid the last change. ${describeHp(previous)}`, result: null },
+      }
+    }
+    case 'rest':
+      if (!state.hp) return message(NO_HP)
+      return applyHp(longRest(state.hp))
+    case 'query':
+      return message(
+        answerQuery(cmd.topic, ch, {
+          hp: state.hp,
+          activeToggles: state.activeToggles,
+          stickyMode: state.stickyMode,
+          pendingCrit: state.pendingCrit,
+        }),
+      )
     case 'again': {
       if (!state.last) return message('Nothing to repeat yet.')
       const r: Resolved =

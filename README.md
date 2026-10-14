@@ -21,7 +21,9 @@ Type what the DM asked for and press Enter. Focus stays in the box; the result i
 
 - Skills and abilities: `stealth`, `perception`, `dex`, `wisdom`. Short forms: `perc`, `soh`, `hist`, `ath`, `init`.
 - Saving throws: `dex save`, `wis saving throw`, `death save`.
-- Attacks are two rolls, as at the table: `rapier` rolls to hit ("Rapier: 22 to hit. You rolled a 15 plus 7 from modifiers."), then `dmg` (or `rapier dmg`, `rapier -d`) rolls its damage. A natural 20 makes that damage roll critical on its own; `rapier crit dmg` forces it.
+- Attacks are two rolls, as at the table: `rapier` rolls to hit ("Rapier: 22 to hit. You rolled a 15 plus 7 from modifiers."), then `dmg` (or `/d`, or `rapier /d`) rolls its damage. A natural 20 makes that damage roll critical on its own; `rapier crit dmg` forces it. `/a` means the roll to hit.
+- Hit points: `-5` takes 5 damage (temporary hit points go first), `+7` heals 7, `temp 8` sets temporary hit points, `hp` reads them, `hp 30` sets them, `undo` reverses the last change, `long rest` resets. At 0 hit points, death saves keep their own count and damage counts as a failure. "Took 5. Temporary hit points used up. 43 of 45 hit points."
+- Questions start with a slash and never roll: `/ac` ("Armor class 18: unarmored defense 10, Dexterity plus 2, Constitution plus 4, plus 2 from Shield."), `/passive`, `/skills` (proficient ones only), `/saves`, `/attacks`, `/hp`, `/status`, `/toggles`, or a name: `/stealth` ("Stealth plus 5, proficient."), `/str` ("Strength 18, modifier plus 4. Saving throw plus 7, proficient."), `/flail`.
 - Advantage or disadvantage: `stealth adv`, `stealth dis`. Or press the Advantage or Disadvantage toggle to apply it to every roll until you turn it off.
 - Bonuses: `history +2`, `stealth +1d4` (Guidance), `wis save +1d4` (Bless), `-1d4` (Bane).
 - Raw dice: `2d6+3`, `d20`, `8d6`.
@@ -31,7 +33,7 @@ Type what the DM asked for and press Enter. Focus stays in the box; the result i
 
 If what you typed matches more than one thing, you hear the options instead of a guess: "Ambiguous: Perception, Performance, or Persuasion. Type more letters."
 
-Every roll is also a large button under a heading (Ability checks, Saving throws, Skills, Attacks, Other rolls), labeled with its modifier; each attack has a to-hit button and a damage button. Shift+Enter on a button rolls with advantage, Ctrl+Enter with disadvantage. Press slash anywhere to jump back to the roll box.
+Every roll is also a large button under a heading (Ability checks, Saving throws, Skills, Attacks, Other rolls), labeled with its modifier; each attack has a to-hit button and a damage button. A checkbox above the skills narrows them to the ones you are proficient in. Shift+Enter on a button rolls with advantage, Ctrl+Enter with disadvantage. Press slash anywhere to jump back to the roll box.
 
 ## Your character
 
@@ -83,6 +85,15 @@ Things that change an attack while they are on: Rage, Sneak Attack, Bless, Great
 ```
 
 Each toggle is a button next to Advantage (press it to keep it on), a word you can type on its own to switch it (`rage`), or a word you add to one roll (`flail rage`). The announcement names it: "Flail with Rage: 22 to hit." and "Flail with Rage: 9 bludgeoning damage. You rolled a 3 plus 4 from modifiers, plus 2 from Rage." Leave out `appliesTo` to apply it to every attack. Effect dice are doubled on a critical hit.
+
+### Hit points and armor class
+
+```json
+"hitPoints": { "max": 60 },
+"armorClass": { "parts": [{ "name": "unarmored defense", "value": 10 }, { "name": "Dexterity", "value": 2 }, { "name": "Constitution", "value": 4 }] }
+```
+
+Current hit points are tracked in the app, per device. Anything that changes armor class while it is on is a toggle with `acBonus`: a shield (`"on": true` because it starts equipped), the Shield spell, a potion. `/ac` adds up the parts and whichever of those are on, and says which are off. The importer fills all of this in from D&D Beyond.
 
 Extra keys when you need them:
 
