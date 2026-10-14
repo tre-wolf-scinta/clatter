@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Check and deploy
 
 on:
   push:
@@ -7,22 +7,20 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: deploy
   cancel-in-progress: true
 
 jobs:
-  check-and-build:
+  check:
     name: Typecheck, unit, e2e with axe, build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
@@ -32,10 +30,29 @@ jobs:
         with:
           path: dist
 
-  deploy:
-    name: Publish
-    needs: check-and-build
+  # Render builds the site from the release branch (see render.yaml). Only a
+  # commit that passed every check above ever reaches it.
+  render:
+    name: Advance the release branch, which Render deploys
+    needs: check
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Point release at this commit
+        run: git push --force origin HEAD:refs/heads/release
+
+  pages:
+    name: Publish the GitHub Pages mirror
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

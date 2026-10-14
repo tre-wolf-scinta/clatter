@@ -1,0 +1,16 @@
+# Render Blueprint (https://render.com/docs/blueprint-spec): the static site
+# that serves Rollcall, as created with the Render CLI (see README, Deploying).
+# Check edits with: render blueprints validate render.yaml
+#
+# The site builds from the release branch. GitHub Actions moves that branch
+# forward only after the full suite (typecheck, unit tests, Playwright with
+# axe) passes on main, so Render never serves a build the accessibility checks
+# have not approved.
+services:
+  - type: web
+    name: rollcall
+    runtime: static
+    repo: https://github.com/tre-wolf-scinta/rollcall
+    branch: release
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
