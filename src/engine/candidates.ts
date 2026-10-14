@@ -110,14 +110,21 @@ export type Match =
   | { kind: 'ambiguous'; candidates: Candidate[] }
   | { kind: 'none' }
 
+export interface Named {
+  /** Everything a player might type for it, lowercased. */
+  names: string[]
+}
+
+export type NamedMatch<T> = { kind: 'match'; item: T } | { kind: 'ambiguous'; items: T[] } | { kind: 'none' }
+
 export const norm = (s: string): string => s.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim()
 
 /** Exact name or alias beats prefix beats substring. Ties are reported, never guessed. */
-export function matchQuery(rawQuery: string, pool: Candidate[], aliases: Record<string, string> = {}): Match {
+export function matchNamed<T extends Named>(rawQuery: string, pool: T[], aliases: Record<string, string> = {}): NamedMatch<T> {
   let q = norm(rawQuery)
   if (aliases[q]) q = norm(aliases[q])
   if (!q) return { kind: 'none' }
-  const score = (c: Candidate): number => {
+  const score = (c: T): number => {
     let best = 0
     for (const raw of c.names) {
       const n = norm(raw)
@@ -128,7 +135,7 @@ export function matchQuery(rawQuery: string, pool: Candidate[], aliases: Record<
     return best
   }
   let top = 0
-  let hits: Candidate[] = []
+  let hits: T[] = []
   for (const c of pool) {
     const s = score(c)
     if (s === 0) continue
@@ -140,8 +147,15 @@ export function matchQuery(rawQuery: string, pool: Candidate[], aliases: Record<
     }
   }
   if (hits.length === 0) return { kind: 'none' }
-  if (hits.length === 1) return { kind: 'match', candidate: hits[0] }
-  return { kind: 'ambiguous', candidates: hits }
+  if (hits.length === 1) return { kind: 'match', item: hits[0] }
+  return { kind: 'ambiguous', items: hits }
+}
+
+export function matchQuery(rawQuery: string, pool: Candidate[], aliases: Record<string, string> = {}): Match {
+  const m = matchNamed(rawQuery, pool, aliases)
+  if (m.kind === 'match') return { kind: 'match', candidate: m.item }
+  if (m.kind === 'ambiguous') return { kind: 'ambiguous', candidates: m.items }
+  return m
 }
 
 /** "Perception, Performance, or Persuasion". */

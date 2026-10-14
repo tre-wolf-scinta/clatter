@@ -205,6 +205,35 @@ test('character toggles are pressable buttons and typed words', async ({ page })
   await expect(result(page)).toContainText(/Club: \d+ to hit\./)
 })
 
+test('the weapon in hand, gear readout, and items', async ({ page }) => {
+  // The sample rogue starts with her rapier equipped.
+  await type(page, 'attack')
+  await expect(result(page)).toContainText(/Rapier: \d+ to hit\. You rolled an? \d+ plus 7 from modifiers\./)
+  await type(page, 'dmg')
+  await expect(result(page)).toContainText(/Rapier: \d+ piercing damage\./)
+  await type(page, 'wield dagger')
+  await expect(result(page)).toContainText('Dagger in hand: plus 7 to hit, 1d4+4 piercing.')
+  await type(page, '/a')
+  await expect(result(page)).toContainText(/Dagger: \d+ to hit\./)
+  await type(page, '/equipped')
+  await expect(result(page)).toContainText(
+    'Dagger in hand: plus 7 to hit, 1d4+4 piercing. Armor: leather armor. Carrying Potion of Healing with 2 left.',
+  )
+  await type(page, '-10')
+  await expect(result(page)).toContainText('Took 10. 28 of 38 hit points.')
+  await type(page, 'drink healing')
+  await expect(result(page)).toContainText(/Drank a Potion of Healing: healed \d+\. \d+ of 38 hit points\. You rolled \d and \d, plus 2\. 1 left\./)
+  const potion = page.getByRole('button', { name: 'Potion of Healing, 1 left' })
+  await expect(potion).toBeVisible()
+  await expectNoAxeViolations(page, 'items in play')
+  await potion.click()
+  await expect(result(page)).toContainText(/Used a Potion of Healing: healed \d+\..* 0 left\./)
+  await expect(page.getByRole('button', { name: 'Potion of Healing, 0 left' })).toBeDisabled()
+  await page.goto('/')
+  await type(page, '/equipped')
+  await expect(result(page)).toContainText('Dagger in hand: plus 7 to hit, 1d4+4 piercing. Armor: leather armor. Carrying Potion of Healing with 0 left.')
+})
+
 test('no axe violations on the initial page', async ({ page }) => {
   await expectNoAxeViolations(page, 'initial page')
 })
@@ -218,6 +247,7 @@ test('headings and landmarks give NVDA a map of the page', async ({ page }) => {
     'Skills',
     'Attacks',
     'Other rolls',
+    'Items',
     'Roll history',
     'Character',
     'Settings',

@@ -194,6 +194,7 @@ export function convert(c) {
       damageType: d.damageType ? String(d.damageType).toLowerCase() : undefined,
       attackBonus: magic || undefined,
       damageBonus: magic || undefined,
+      equipped: it.equipped ? true : undefined,
     }
     attacks.push({ name: d.name, damage: d.damage.diceString, ...base })
     if (isRanged) ranged.add(d.name)
@@ -241,6 +242,26 @@ export function convert(c) {
     if (d.armorTypeId === 4) toggles.push({ name: d.name, acBonus: d.armorClass ?? 2, on: it.equipped || undefined })
   }
 
+  // Potions become consumables; the standard healing potions get their dice.
+  const HEALING = {
+    'potion of healing': '2d4+2',
+    'potion of greater healing': '4d4+4',
+    'potion of superior healing': '8d4+8',
+    'potion of supreme healing': '10d4+20',
+  }
+  const consumables = []
+  for (const it of c.inventory ?? []) {
+    const d = it.definition
+    if (d.filterType !== 'Potion') continue
+    const key = String(d.name).toLowerCase()
+    consumables.push({
+      name: d.name,
+      count: it.quantity ?? 1,
+      heal: HEALING[key],
+      aliases: key.startsWith('potion of ') ? [key.slice('potion of '.length)] : undefined,
+    })
+  }
+
   return prune({
     name: c.name,
     level,
@@ -251,6 +272,7 @@ export function convert(c) {
     attacks,
     custom,
     toggles,
+    consumables,
     hitPoints: hitPointsMax > 0 ? { max: hitPointsMax } : undefined,
     armorClass: { parts: acParts },
     source: {

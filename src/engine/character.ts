@@ -103,6 +103,8 @@ export interface CharacterFile {
   custom?: { name: string; dice: string; aliases?: string[] }[]
   /** Switchable modifiers: Rage +2 damage, Sneak Attack +3d6, a shield +2 AC, the Shield spell +5 AC. */
   toggles?: ToggleFile[]
+  /** Potions and other things with a count, used by name: drink healing. */
+  consumables?: ConsumableFile[]
   /** Maximum hit points. Current hit points are tracked in the app, per device. */
   hitPoints?: { max: number }
   /**
@@ -154,6 +156,20 @@ export interface AttackFile {
   addAbilityToDamage?: boolean
   /** Replaces the derived to-hit modifier entirely. */
   toHit?: number
+  /** Starts in hand on a new device, so a bare attack uses it. */
+  equipped?: boolean
+  aliases?: string[]
+}
+
+export interface ConsumableFile {
+  name: string
+  /** How many you carry. Default 1. The app counts down per device. */
+  count?: number
+  /** Healing when used, like "2d4+2". */
+  heal?: string
+  /** A toggle switched on when used, by name. */
+  toggle?: string
+  /** Extra words that name it: "healing", "potion". */
   aliases?: string[]
 }
 
@@ -186,6 +202,18 @@ export interface DerivedAttack {
   /** Damage dice with the ability modifier and bonuses folded into flat. */
   damage: DiceExpr
   damageType?: string
+  /** Starts in hand on a new device. */
+  equipped: boolean
+  aliases: string[]
+}
+
+export interface DerivedConsumable {
+  name: string
+  /** Starting count; the app tracks what is left. */
+  count: number
+  heal: DiceExpr | null
+  /** Name of a toggle switched on when used. */
+  toggle: string | null
   aliases: string[]
 }
 
@@ -223,6 +251,7 @@ export interface Character {
   attacks: DerivedAttack[]
   custom: DerivedCustom[]
   toggles: DerivedToggle[]
+  consumables: DerivedConsumable[]
   /** Null when the file gives no hit points. */
   hitPointsMax: number | null
   /** Null when the file gives no armor class. */
@@ -406,6 +435,7 @@ export function deriveCharacter(file: CharacterFile): Character {
       toHit,
       damage: { terms: dmg.terms, flat },
       damageType: typeof a.damageType === 'string' && a.damageType.trim() ? a.damageType.trim() : undefined,
+      equipped: a.equipped === true,
       aliases: stringList(a.aliases, `${context}.aliases`).map(normName),
     }
   })
@@ -449,6 +479,32 @@ export function deriveCharacter(file: CharacterFile): Character {
     }
   })
 
+  const consumables: DerivedConsumable[] = (file.consumables ?? []).map((c, i) => {
+    const context = `consumables[${i + 1}]`
+    if (!c || typeof c !== 'object' || typeof c.name !== 'string' || !c.name.trim()) {
+      throw new CharacterError(`${context}: every consumable needs a name.`)
+    }
+    const count = numberOr(c.count, 1, `${context}.count`)
+    if (!Number.isInteger(count) || count < 0) {
+      throw new CharacterError(`${context} (${c.name}): count must be a whole number.`)
+    }
+    let heal: DiceExpr | null = null
+    if (c.heal !== undefined && c.heal !== null && String(c.heal).trim() !== '') {
+      heal = parseDiceExpr(String(c.heal))
+      if (!heal) throw new CharacterError(`${context} (${c.name}): heal must be dice like 2d4+2.`)
+    }
+    let toggle: string | null = null
+    if (c.toggle !== undefined && c.toggle !== null && String(c.toggle).trim() !== '') {
+      const wanted = normName(String(c.toggle))
+      const found = toggles.find((t) => normName(t.name) === wanted || t.aliases.includes(wanted))
+      if (!found) {
+        throw new CharacterError(`${context} (${c.name}): toggle "${c.toggle}" is not one of this character's toggles.`)
+      }
+      toggle = found.name
+    }
+    return { name: c.name.trim(), count, heal, toggle, aliases: stringList(c.aliases, `${context}.aliases`).map(normName) }
+  })
+
   const aliases: Record<string, string> = {}
   for (const [k, v] of Object.entries(file.aliases ?? {})) {
     if (typeof v !== 'string') throw new CharacterError(`aliases.${k}: expected a name to roll.`)
@@ -488,6 +544,7 @@ export function deriveCharacter(file: CharacterFile): Character {
     attacks,
     custom,
     toggles,
+    consumables,
     hitPointsMax,
     armorClass,
     aliases,

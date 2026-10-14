@@ -36,6 +36,8 @@ import { LiveRegion } from './ui/LiveRegion'
 const CHARACTER_KEY = 'clatter.character'
 const SETTINGS_KEY = 'clatter.settings'
 const hpKey = (name: string): string => `clatter.hp.${name}`
+const handKey = (name: string): string => `clatter.hand.${name}`
+const itemsKey = (name: string): string => `clatter.items.${name}`
 const HISTORY_LIMIT = 100
 const QUICK_DICE = [4, 6, 8, 10, 12, 20, 100]
 
@@ -79,6 +81,22 @@ function initialHitPoints(ch: Character): HitPoints | null {
   return freshHitPoints(ch.hitPointsMax)
 }
 
+/** The weapon in hand on this device: what was saved, else the file's equipped weapon, else nothing. */
+function initialHand(ch: Character): string | null {
+  const stored = loadString(handKey(ch.name))
+  if (stored === '') return null
+  if (stored && ch.attacks.some((a) => a.name === stored)) return stored
+  return ch.attacks.find((a) => a.equipped)?.name ?? null
+}
+
+/** What is left of each consumable on this device, with the file's count for anything new. */
+function initialItems(ch: Character): Record<string, number> {
+  const stored = loadJSON<Record<string, number>>(itemsKey(ch.name), {})
+  const out: Record<string, number> = {}
+  for (const c of ch.consumables) out[c.name] = Number.isInteger(stored[c.name]) ? stored[c.name] : c.count
+  return out
+}
+
 /** Visual-only hint under the roll box; never announced, so typing stays quiet. */
 function describeSuggestion(input: string, candidates: Candidate[], ch: Character): string {
   const cmd = parseCommand(input)
@@ -90,7 +108,7 @@ function describeSuggestion(input: string, candidates: Candidate[], ch: Characte
     case 'last':
       return 'Enter repeats the last result.'
     case 'undo':
-      return 'Enter undoes the last hit point change.'
+      return 'Enter undoes the last change.'
     case 'rest':
       return 'Enter takes a long rest.'
     case 'hp':
@@ -103,6 +121,14 @@ function describeSuggestion(input: string, candidates: Candidate[], ch: Characte
       return 'Enter sets temporary hit points.'
     case 'query':
       return `Enter answers /${cmd.topic}.`
+    case 'wield':
+      return cmd.query ? `Enter wields ${cmd.query}.` : 'Enter says what is in hand.'
+    case 'unequip':
+      return cmd.query ? `Enter puts away ${cmd.query}.` : 'Enter empties your hand.'
+    case 'use':
+      return cmd.query ? `Enter uses ${cmd.query}.` : 'Enter lists what you carry.'
+    case 'hand':
+      return cmd.part === 'damage' ? 'Enter rolls damage for the weapon in hand.' : 'Enter attacks with the weapon in hand.'
     case 'again':
       return 'Enter rolls the last thing again.'
     case 'dice':
@@ -175,6 +201,8 @@ export default function App() {
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [stickyMode, setStickyMode] = useState<Mode>('normal')
   const [activeToggles, setActiveToggles] = useState<string[]>([])
+  const [inHand, setInHand] = useState<string | null>(null)
+  const [items, setItems] = useState<Record<string, number>>({})
   const [dialogOpen, setDialogOpen] = useState(false)
   const roller = useRef<RollerState>(initialRollerState())
   const inputRef = useRef<HTMLInputElement>(null)
@@ -188,18 +216,24 @@ export default function App() {
     roller.current = { ...roller.current, stickyMode, activeToggles }
   }, [stickyMode, activeToggles])
 
-  // A new character: its hit points for this device, its equipped toggles, and a clean slate.
+  // A new character: its hit points, weapon in hand, and items for this device, its equipped toggles, and a clean slate.
   useEffect(() => {
     const defaults = character.toggles.filter((t) => t.on).map((t) => t.name)
+    const hand = initialHand(character)
+    const stock = initialItems(character)
     roller.current = {
       ...roller.current,
       hp: initialHitPoints(character),
-      hpHistory: [],
+      history: [],
       activeToggles: defaults,
+      inHand: hand,
+      items: stock,
       last: null,
       pendingCrit: null,
     }
     setActiveToggles(defaults)
+    setInHand(hand)
+    setItems(stock)
   }, [character])
 
   // "/" anywhere outside a text field jumps back to the roll box.
@@ -252,7 +286,11 @@ export default function App() {
   function finish(next: { state: RollerState; outcome: { text: string; result: unknown } }) {
     roller.current = next.state
     setActiveToggles(next.state.activeToggles)
+    setInHand(next.state.inHand)
+    setItems(next.state.items)
     if (next.state.hp) saveJSON(hpKey(character.name), next.state.hp)
+    saveString(handKey(character.name), next.state.inHand ?? '')
+    saveJSON(itemsKey(character.name), next.state.items)
     if (next.outcome.result) {
       setHistory((h) => [{ id: nextId.current++, text: next.outcome.text }, ...h].slice(0, HISTORY_LIMIT))
     }
@@ -365,6 +403,7 @@ export default function App() {
             </p>
             <p className="muted suggestion">{suggestion}</p>
           </form>
+          <p className="muted">{inHand ? `${inHand} in hand.` : 'Nothing in hand.'}</p>
           <div className="grid">
             <button type="button" aria-pressed={stickyMode === 'advantage'} onClick={() => toggleMode('advantage')}>
               Advantage
@@ -428,6 +467,27 @@ export default function App() {
             </button>
           ))}
         </ButtonGroup>
+
+        {character.consumables.length > 0 && (
+          <section aria-labelledby="items-h">
+            <h2 id="items-h">Items</h2>
+            <div className="grid">
+              {character.consumables.map((c) => {
+                const left = items[c.name] ?? c.count
+                return (
+                  <button
+                    key={c.name}
+                    type="button"
+                    disabled={left <= 0}
+                    onClick={() => finish(runCommand(`use ${c.name}`, character, roller.current, announceOptions))}
+                  >
+                    {`${c.name}, ${left} left`}
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        )}
 
         <section aria-labelledby="history-h">
           <h2 id="history-h">Roll history</h2>
@@ -499,19 +559,28 @@ export default function App() {
               on its own; add crit to force it.
             </li>
             <li>
+              Weapon in hand: attacking by name puts that weapon in hand, and wield flail does too. After that,
+              attack or /a rolls to hit with it and dmg rolls its damage. unequip puts it away.
+            </li>
+            <li>
+              Gear and items: equip shield and unequip shield switch it and say the new armor class. drink healing or
+              use torch uses an item. /equipped reads what you hold, your shield, your armor, and what you carry;
+              /potions reads what is left.
+            </li>
+            <li>
               Hit points: minus 5 takes 5 (temporary hit points go first), plus 7 heals 7, temp 8 sets temporary hit
               points, hp reads them, undo reverses the last change, long rest resets. Death saves keep their own
               count.
             </li>
             <li>
-              Questions start with a slash: /ac, /passive, /skills, /saves, /attacks, /hp, /status, or a name such as
-              /stealth or /str.
+              Questions start with a slash: /ac, /passive, /skills, /saves, /attacks, /equipped, /potions, /hp,
+              /status, or a name such as /stealth or /str.
             </li>
             <li>Short forms work: perc, soh, init, hist. If it is ambiguous you are told, never guessed.</li>
             <li>Add adv or dis for advantage or disadvantage. Add +2 or +1d4 for a bonus such as Guidance.</li>
             <li>
-              Toggles such as Rage or a shield: press the button to keep it on, type rage to switch it, or add it to
-              one roll: flail rage. Equipped items start on.
+              Toggles such as Rage: press the button to keep it on, type rage to switch it, or add it to one roll:
+              flail rage. Equipped items start on.
             </li>
             <li>Press Enter on the empty box to roll the last thing again. Type last to hear the last result again.</li>
             <li>Press slash anywhere to jump back to the roll box. Escape clears it.</li>

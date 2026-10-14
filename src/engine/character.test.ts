@@ -184,3 +184,36 @@ describe('hit points, armor class, and equipped toggles', () => {
     expect(() => parseCharacterFile('{"armorClass":{"parts":[{"value":10}]}}')).toThrowError(/parts\[1\]: every part needs a name/)
   })
 })
+
+describe('equipped weapons and consumables', () => {
+  const expectError = (text: string, pattern: RegExp) => expect(() => parseCharacterFile(text)).toThrowError(pattern)
+  it('keeps the equipped flag and derives consumables', () => {
+    const ch = deriveCharacter({
+      attacks: [{ name: 'Flail', damage: '1d8', equipped: true }, { name: 'Dagger', damage: '1d4' }],
+      toggles: [{ name: 'Giant Strength' }],
+      consumables: [
+        { name: 'Potion of Healing', count: 2, heal: '2d4+2', aliases: ['Healing'] },
+        { name: 'Potion of Giant Strength', toggle: 'giant strength' },
+        { name: 'Torch', count: 0 },
+      ],
+    })
+    expect(ch.attacks.map((a) => a.equipped)).toEqual([true, false])
+    expect(ch.consumables[0]).toEqual({
+      name: 'Potion of Healing',
+      count: 2,
+      heal: { terms: [{ sign: 1, count: 2, sides: 4 }], flat: 2 },
+      toggle: null,
+      aliases: ['healing'],
+    })
+    expect(ch.consumables[1]).toMatchObject({ count: 1, heal: null, toggle: 'Giant Strength' })
+    expect(ch.consumables[2]).toMatchObject({ count: 0 })
+    expect(deriveCharacter({}).consumables).toEqual([])
+  })
+
+  it('rejects bad consumables', () => {
+    expectError('{"consumables":[{"count":2}]}', /consumables\[1\]: every consumable needs a name/)
+    expectError('{"consumables":[{"name":"Potion","count":1.5}]}', /Potion.*count must be a whole number/)
+    expectError('{"consumables":[{"name":"Potion","heal":"lots"}]}', /Potion.*heal must be dice/)
+    expectError('{"consumables":[{"name":"Potion","toggle":"Haste"}]}', /toggle "Haste" is not one of this character's toggles/)
+  })
+})

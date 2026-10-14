@@ -22,7 +22,9 @@ Type what the DM asked for and press Enter. Focus stays in the box; the result i
 - Skills and abilities: `stealth`, `perception`, `dex`, `wisdom`. Short forms: `perc`, `soh`, `hist`, `ath`, `init`.
 - Saving throws: `dex save`, `wis saving throw`, `death save`.
 - Attacks are two rolls, as at the table: `rapier` rolls to hit ("Rapier: 22 to hit. You rolled a 15 plus 7 from modifiers."), then `dmg` (or `/d`, or `rapier /d`) rolls its damage. A natural 20 makes that damage roll critical on its own; `rapier crit dmg` forces it. `/a` means the roll to hit.
-- Hit points: `-5` takes 5 damage (temporary hit points go first), `+7` heals 7, `temp 8` sets temporary hit points, `hp` reads them, `hp 30` sets them, `undo` reverses the last change, `long rest` resets. At 0 hit points, death saves keep their own count and damage counts as a failure. "Took 5. Temporary hit points used up. 43 of 45 hit points."
+- The weapon in hand: attacking by name puts that weapon in hand, and so does `wield flail` (also `equip`, `draw`, `hold`). After that, bare `attack` or `/a` rolls to hit with it and `dmg` rolls its damage. `unequip` or `sheathe` puts it away. The character file's `"equipped": true` picks the weapon you start with.
+- Gear and items: `equip shield` and `unequip shield` (also `don`, `doff`) switch a toggle such as a shield and say the new armor class. `drink healing`, `use torch`, or `quaff giant` uses a consumable: "Drank a Potion of Healing: healed 7. 50 of 60 hit points. 2 left." `/equipped` reads what you hold, your shield, your armor, and what you carry; `/potions` reads what is left. `undo` covers items too.
+- Hit points: `-5` takes 5 damage (temporary hit points go first), `take 5` and `heal 7` work too, `+7` heals 7, `temp 8` sets temporary hit points, `hp` reads them, `hp 30` sets them, `undo` reverses the last change, `long rest` resets. At 0 hit points, death saves keep their own count and damage counts as a failure. "Took 5. Temporary hit points used up. 43 of 45 hit points."
 - Questions start with a slash and never roll: `/ac` ("Armor class 18: unarmored defense 10, Dexterity plus 2, Constitution plus 4, plus 2 from Shield."), `/passive`, `/skills` (proficient ones only), `/saves`, `/attacks`, `/hp`, `/status`, `/toggles`, or a name: `/stealth` ("Stealth plus 5, proficient."), `/str` ("Strength 18, modifier plus 4. Saving throw plus 7, proficient."), `/flail`.
 - Advantage or disadvantage: `stealth adv`, `stealth dis`. Or press the Advantage or Disadvantage toggle to apply it to every roll until you turn it off.
 - Bonuses: `history +2`, `stealth +1d4` (Guidance), `wis save +1d4` (Bless), `-1d4` (Bane).
@@ -94,6 +96,18 @@ Each toggle is a button next to Advantage (press it to keep it on), a word you c
 ```
 
 Current hit points are tracked in the app, per device. Anything that changes armor class while it is on is a toggle with `acBonus`: a shield (`"on": true` because it starts equipped), the Shield spell, a potion. `/ac` adds up the parts and whichever of those are on, and says which are off. The importer fills all of this in from D&D Beyond.
+
+### Consumables
+
+```json
+"consumables": [
+  { "name": "Potion of Healing", "count": 2, "heal": "2d4+2", "aliases": ["healing"] },
+  { "name": "Potion of Giant Strength", "count": 1, "toggle": "Giant Strength" },
+  { "name": "Torch", "count": 5 }
+]
+```
+
+`heal` rolls dice and heals; `toggle` switches one of the character's toggles on; neither just counts down. Counts are tracked per device, and the importer brings potions in from D&D Beyond with the standard healing potions' dice. Each one is also a button under the Items heading.
 
 Extra keys when you need them:
 

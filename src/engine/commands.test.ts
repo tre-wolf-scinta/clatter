@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { deriveCharacter, parseCharacterFile } from './character'
 import {
   HELP_TEXT,
+  NOTHING_IN_HAND,
   allCandidates,
   extractToggles,
   initialRollerState,
@@ -35,14 +36,37 @@ describe('parseCommand', () => {
     expect(parseCommand('last')).toEqual({ kind: 'last' })
     expect(parseCommand('again')).toEqual({ kind: 'again', mode: null, bonus: null, part: null })
     expect(parseCommand('adv')).toEqual({ kind: 'again', mode: 'advantage', bonus: null, part: null })
-    expect(parseCommand('dmg')).toEqual({ kind: 'again', mode: null, bonus: null, part: 'damage' })
-    expect(parseCommand('/d')).toEqual({ kind: 'again', mode: null, bonus: null, part: 'damage' })
+  })
+
+  it('a part on its own means the weapon in hand', () => {
+    const hand = { kind: 'hand', mode: null, bonus: null, crit: false }
+    expect(parseCommand('dmg')).toEqual({ ...hand, part: 'damage' })
+    expect(parseCommand('/d')).toEqual({ ...hand, part: 'damage' })
+    expect(parseCommand('attack')).toEqual({ ...hand, part: 'attack' })
+    expect(parseCommand('/a')).toEqual({ ...hand, part: 'attack' })
+    expect(parseCommand('/a adv')).toEqual({ ...hand, part: 'attack', mode: 'advantage' })
+    expect(parseCommand('crit dmg')).toEqual({ ...hand, part: 'damage', crit: true })
+  })
+
+  it('gear and item commands', () => {
+    expect(parseCommand('wield flail')).toEqual({ kind: 'wield', query: 'flail' })
+    expect(parseCommand('equip the shield')).toEqual({ kind: 'wield', query: 'shield' })
+    expect(parseCommand('draw my sword')).toEqual({ kind: 'wield', query: 'sword' })
+    expect(parseCommand('wield')).toEqual({ kind: 'wield', query: '' })
+    expect(parseCommand('unequip')).toEqual({ kind: 'unequip', query: '' })
+    expect(parseCommand('doff shield')).toEqual({ kind: 'unequip', query: 'shield' })
+    expect(parseCommand('drink a potion of healing')).toEqual({ kind: 'use', query: 'potion of healing', verb: 'drink' })
+    expect(parseCommand('use torch')).toEqual({ kind: 'use', query: 'torch', verb: 'use' })
+    expect(parseCommand('take potion')).toEqual({ kind: 'use', query: 'potion', verb: 'take' })
   })
 
   it('hit point commands', () => {
     expect(parseCommand('-5')).toEqual({ kind: 'hp', delta: -5 })
     expect(parseCommand('+7')).toEqual({ kind: 'hp', delta: 7 })
     expect(parseCommand(' -12 ')).toEqual({ kind: 'hp', delta: -12 })
+    expect(parseCommand('take 5')).toEqual({ kind: 'hp', delta: -5 })
+    expect(parseCommand('take 5 damage')).toEqual({ kind: 'hp', delta: -5 })
+    expect(parseCommand('heal 7')).toEqual({ kind: 'hp', delta: 7 })
     expect(parseCommand('temp 8')).toEqual({ kind: 'temp', value: 8 })
     expect(parseCommand('temp')).toEqual({ kind: 'temp', value: null })
     expect(parseCommand('hp')).toEqual({ kind: 'hp-status' })
@@ -57,6 +81,7 @@ describe('parseCommand', () => {
     expect(parseCommand('/AC')).toEqual({ kind: 'query', topic: 'ac' })
     expect(parseCommand('/sleight of hand')).toEqual({ kind: 'query', topic: 'sleight of hand' })
     expect(parseCommand('/hp')).toEqual({ kind: 'query', topic: 'hp' })
+    expect(parseCommand('/equipped')).toEqual({ kind: 'query', topic: 'equipped' })
   })
 
   it('splits a roll into query, mode, bonus, part, and flags', () => {
@@ -249,10 +274,173 @@ describe('runCommand speaks attacks as two rolls', () => {
     expect(say('rapier', [0.7], hit.state).state.pendingCrit).toBeNull()
   })
 
-  it('dmg on its own rolls damage for the last attack', () => {
+  it('dmg on its own rolls damage for the weapon in hand, which the last attack set', () => {
     const hit = say('rapier', [0.7])
+    expect(hit.state.inHand).toBe('Rapier')
     expect(say('dmg', [0.25], hit.state).outcome.text).toBe('Rapier: 7 piercing damage. You rolled a 3 plus 4 from modifiers.')
     expect(say('/d', [0.25], hit.state).outcome.text).toBe('Rapier: 7 piercing damage. You rolled a 3 plus 4 from modifiers.')
+  })
+})
+
+describe('weapon in hand', () => {
+  it('starts empty, and a bare attack says so', () => {
+    expect(say('attack', [0.7]).outcome).toEqual({ text: NOTHING_IN_HAND, result: null })
+    expect(say('wield', [0.5]).outcome.text).toBe('Wield what? You have Rapier, Shortbow and Dagger.')
+    expect(say('unequip', [0.5]).outcome.text).toBe('Nothing in hand.')
+  })
+
+  it('wield puts a weapon in hand; attack, /a, and dmg use it', () => {
+    const held = say('wield rapier', [0.5])
+    expect(held.outcome).toEqual({ text: 'Rapier in hand: plus 7 to hit, 1d8+4 piercing.', result: null })
+    expect(held.state.inHand).toBe('Rapier')
+    expect(say('wield', [0.5], held.state).outcome.text).toBe('Rapier in hand.')
+    expect(say('attack', [0.7], held.state).outcome.text).toBe('Rapier: 22 to hit. You rolled a 15 plus 7 from modifiers.')
+    expect(say('/a adv', [0.7, 0.25], held.state).outcome.text).toBe(
+      'Rapier with advantage: 22 to hit. You rolled a 15 and a 6, kept the 15, plus 7 from modifiers.',
+    )
+    expect(say('dmg', [0.25], held.state).outcome.text).toBe('Rapier: 7 piercing damage. You rolled a 3 plus 4 from modifiers.')
+    expect(say('crit dmg', [0.25, 0.5], held.state).outcome.text).toBe(
+      'Critical hit! Rapier: 12 piercing damage. You rolled 3 and 5, plus 4 from modifiers.',
+    )
+  })
+
+  it('attacking by name changes the weapon in hand', () => {
+    const held = say('wield rapier', [0.5])
+    const bow = say('bow', [0.7], held.state)
+    expect(bow.state.inHand).toBe('Shortbow')
+    expect(say('/a', [0.7], bow.state).outcome.text).toBe('Shortbow: 22 to hit. You rolled a 15 plus 7 from modifiers.')
+  })
+
+  it('a natural 20 by name is still critical for a bare dmg', () => {
+    const hit = say('rapier', [0.999])
+    expect(say('dmg', [0.25, 0.5], hit.state).outcome.text).toBe(
+      'Critical hit! Rapier: 12 piercing damage. You rolled 3 and 5, plus 4 from modifiers.',
+    )
+  })
+
+  it('unequip empties the hand, by name or not', () => {
+    const held = say('wield rapier', [0.5])
+    const away = say('unequip', [0.5], held.state)
+    expect(away.outcome.text).toBe('Rapier put away. Nothing in hand.')
+    expect(away.state.inHand).toBeNull()
+    expect(say('attack', [0.7], away.state).outcome.text).toBe(NOTHING_IN_HAND)
+    expect(say('unequip dagger', [0.5], held.state).outcome.text).toBe('Dagger is not in hand.')
+    expect(say('sheathe rapier', [0.5], held.state).outcome.text).toBe('Rapier put away. Nothing in hand.')
+  })
+
+  it('unknown and ambiguous gear', () => {
+    expect(say('wield xyz', [0.5]).outcome.text).toBe('Nothing called xyz to wield. You have Rapier, Shortbow and Dagger.')
+    expect(say('unequip xyz', [0.5]).outcome.text).toBe('Nothing called xyz to put away.')
+  })
+
+  it('one-shot toggles on the attack carry into the bare damage roll', () => {
+    const barbarian = deriveCharacter({
+      level: 5,
+      abilities: { str: 18 },
+      attacks: [{ name: 'Flail', damage: '1d8', damageType: 'bludgeoning' }],
+      toggles: [{ name: 'Rage', damageBonus: 2 }],
+    })
+    const hit = runCommand('flail rage', barbarian, initialRollerState(), opts, queueRng([0.7]))
+    expect(runCommand('dmg', barbarian, hit.state, opts, queueRng([0.25])).outcome.text).toBe(
+      'Flail with Rage: 9 bludgeoning damage. You rolled a 3 plus 4 from modifiers, plus 2 from Rage.',
+    )
+  })
+})
+
+describe('equipping gear', () => {
+  const fighter = deriveCharacter({
+    level: 5,
+    abilities: { str: 16, dex: 14 },
+    attacks: [{ name: 'Longsword', damage: '1d8', damageType: 'slashing' }],
+    toggles: [{ name: 'Shield', acBonus: 2 }],
+    armorClass: {
+      parts: [
+        { name: 'chain shirt', value: 13 },
+        { name: 'Dexterity', value: 2 },
+      ],
+    },
+  })
+  const run = (input: string, state: RollerState = initialRollerState()) =>
+    runCommand(input, fighter, state, opts, queueRng([0.5]))
+
+  it('equip and unequip set a toggle and say the armor class', () => {
+    const on = run('equip shield')
+    expect(on.outcome.text).toBe('Shield on. Armor class 17.')
+    expect(on.state.activeToggles).toEqual(['Shield'])
+    expect(run('equip shield', on.state).outcome.text).toBe('Shield is already on.')
+    expect(run('don shield', on.state).outcome.text).toBe('Shield is already on.')
+    const off = run('doff shield', on.state)
+    expect(off.outcome.text).toBe('Shield off. Armor class 15.')
+    expect(off.state.activeToggles).toEqual([])
+    expect(run('unequip shield', off.state).outcome.text).toBe('Shield is already off.')
+  })
+
+  it('/equipped reads the hand, the gear, the armor, and what is carried', () => {
+    expect(run('/equipped').outcome.text).toBe('Nothing in hand. Shield off. Armor: chain shirt.')
+    const ready = run('equip shield', run('wield longsword').state)
+    expect(run('/equipped', ready.state).outcome.text).toBe(
+      'Longsword in hand: plus 6 to hit, 1d8+3 slashing. Shield on. Armor: chain shirt.',
+    )
+    expect(run('/status', ready.state).outcome.text).toBe('Longsword in hand. Shield on.')
+  })
+})
+
+describe('consumables', () => {
+  const healer = deriveCharacter({
+    level: 3,
+    abilities: { con: 14 },
+    hitPoints: { max: 20 },
+    toggles: [{ name: 'Giant Strength' }],
+    consumables: [
+      { name: 'Potion of Healing', count: 2, heal: '2d4+2', aliases: ['healing', 'potion'] },
+      { name: 'Potion of Giant Strength', count: 1, toggle: 'Giant Strength' },
+      { name: 'Torch', count: 3 },
+    ],
+  })
+  const start = (): RollerState => ({
+    ...initialRollerState(),
+    hp: { ...freshHitPoints(20), current: 10 },
+    items: { 'Potion of Healing': 2, 'Potion of Giant Strength': 1, Torch: 3 },
+  })
+  const run = (input: string, state: RollerState, dice: number[] = [0.5]) =>
+    runCommand(input, healer, state, opts, queueRng(dice))
+
+  it('drinking a healing potion heals, counts down, and can be undone', () => {
+    const drank = run('drink healing', start(), [0.5, 0.25])
+    expect(drank.outcome.text).toBe(
+      'Drank a Potion of Healing: healed 7. 17 of 20 hit points. You rolled 3 and 2, plus 2. 1 left.',
+    )
+    expect(drank.state.items['Potion of Healing']).toBe(1)
+    const again = run('use potion', drank.state, [0.5, 0.25])
+    expect(again.outcome.text).toBe('Used a Potion of Healing: healed 7. 20 of 20 hit points. You rolled 3 and 2, plus 2. 0 left.')
+    expect(run('drink healing', again.state).outcome.text).toBe('No Potion of Healing left.')
+    const undone = run('undo', again.state)
+    expect(undone.outcome.text).toBe('Undid the last change. 17 of 20 hit points. Potion of Healing: 1 left.')
+    expect(undone.state.items['Potion of Healing']).toBe(1)
+  })
+
+  it('other items switch a toggle on or just count down', () => {
+    const strong = run('quaff giant', start())
+    expect(strong.outcome.text).toBe('Drank a Potion of Giant Strength. Giant Strength on. 0 left.')
+    expect(strong.state.activeToggles).toEqual(['Giant Strength'])
+    expect(run('use torch', start()).outcome.text).toBe('Used a Torch. 2 left.')
+  })
+
+  it('says what you carry when the item is missing or unnamed', () => {
+    const carry = 'You carry Potion of Healing with 2 left, Potion of Giant Strength with 1 left and Torch with 3 left.'
+    expect(run('drink', start()).outcome.text).toBe(`Use what? ${carry}`)
+    expect(run('use xyz', start()).outcome.text).toBe(`Nothing called xyz to use. ${carry}`)
+    expect(run('/potions', start()).outcome.text).toBe('Potion of Healing, 2 left. Potion of Giant Strength, 1 left. Torch, 3 left.')
+    expect(say('use torch', [0.5]).outcome.text).toBe('Nothing called torch to use. You carry Potion of Healing with 2 left.')
+  })
+
+  it('a healing potion without hit points on the character still counts down', () => {
+    const noHp = deriveCharacter({ consumables: [{ name: 'Potion of Healing', heal: '2d4+2' }] })
+    const r = runCommand('drink potion', noHp, { ...initialRollerState(), items: { 'Potion of Healing': 1 } }, opts, queueRng([0.5]))
+    expect(r.outcome.text).toBe('Drank a Potion of Healing, but this character has no hit points to heal. 0 left.')
+    expect(runCommand('use torch', deriveCharacter({}), initialRollerState(), opts).outcome.text).toBe(
+      'No consumables on this character.',
+    )
   })
 })
 
@@ -275,7 +463,7 @@ describe('runCommand messages', () => {
     expect(say('/stealth', [0.5]).outcome).toEqual({ text: 'Stealth plus 10, expertise.', result: null })
     expect(say('/skills', [0.5]).outcome.text).toContain('Proficient: Acrobatics plus 7')
     expect(say('/hp', [0.5]).outcome.text).toBe(NO_HP)
-    expect(say('/ac', [0.5]).outcome.text).toContain('No armor class')
+    expect(say('/ac', [0.5]).outcome.text).toBe('Armor class 15: leather armor 11, Dexterity plus 4.')
   })
 })
 
@@ -331,12 +519,14 @@ describe('hit points through the command box', () => {
   it('a bare signed number is damage or healing, with undo', () => {
     const hurt = run('-5', withHp())
     expect(hurt.outcome).toEqual({ text: 'Took 5. 55 of 60 hit points.', result: null })
-    expect(hurt.state.hpHistory).toHaveLength(1)
+    expect(hurt.state.history).toHaveLength(1)
     const undone = run('undo', hurt.state)
     expect(undone.outcome.text).toBe('Undid the last change. 60 of 60 hit points.')
-    expect(undone.state.hpHistory).toHaveLength(0)
+    expect(undone.state.history).toHaveLength(0)
     expect(run('undo', undone.state).outcome.text).toBe('Nothing to undo.')
     expect(run('+7', hurt.state).outcome.text).toBe('Healed 7. 60 of 60 hit points.')
+    expect(run('take 5', withHp()).outcome.text).toBe('Took 5. 55 of 60 hit points.')
+    expect(run('heal 3', hurt.state).outcome.text).toBe('Healed 3. 58 of 60 hit points.')
   })
 
   it('temporary hit points, reading, setting, and resting', () => {
@@ -355,9 +545,10 @@ describe('hit points through the command box', () => {
   })
 
   it('without hit points on the character, every hit point command says so', () => {
-    for (const cmd of ['-5', '+5', 'temp 3', 'hp', 'hp 3', 'undo', 'long rest']) {
+    for (const cmd of ['-5', '+5', 'temp 3', 'hp', 'hp 3', 'long rest']) {
       expect(run(cmd, initialRollerState()).outcome.text).toBe(NO_HP)
     }
+    expect(run('undo', initialRollerState()).outcome.text).toBe('Nothing to undo.')
   })
 
   it('death saves keep a tally once the character is down', () => {

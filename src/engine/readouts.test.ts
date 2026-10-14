@@ -36,6 +36,8 @@ const ctx = (over: Partial<StatusContext> = {}): StatusContext => ({
   activeToggles: ['Shield'],
   stickyMode: 'normal',
   pendingCrit: null,
+  inHand: null,
+  items: {},
   ...over,
 })
 
@@ -93,7 +95,27 @@ describe('stats', () => {
   it('ambiguity and unknown topics are said plainly', () => {
     expect(ask('per')).toBe('Ambiguous: Perception, Performance, or Persuasion. Type more letters.')
     expect(ask('xyz')).toBe(
-      'Nothing called xyz. Try /ac, /passive, /skills, /saves, /attacks, /hp, /status, or the name of a skill, ability, or attack.',
+      'Nothing called xyz. Try /ac, /passive, /skills, /saves, /attacks, /equipped, /potions, /hp, /status, or the name of a skill, ability, or attack.',
+    )
+  })
+
+  it('equipped and potions', () => {
+    expect(ask('equipped')).toBe('Nothing in hand. Shield on. Shield spell off. Armor: unarmored defense.')
+    expect(ask('hand', ctx({ inHand: 'Flail' }))).toBe(
+      'Flail in hand: plus 7 to hit, 1d8+4 bludgeoning. Shield on. Shield spell off. Armor: unarmored defense.',
+    )
+    expect(ask('status', ctx({ inHand: 'Flail' }))).toBe('Flail in hand. Shield on.')
+    expect(ask('potions')).toBe('No consumables on this character.')
+    const packed = deriveCharacter({
+      consumables: [
+        { name: 'Potion of Healing', count: 2, heal: '2d4+2' },
+        { name: 'Torch', count: 5 },
+      ],
+    })
+    const items = { 'Potion of Healing': 1, Torch: 5 }
+    expect(answerQuery('potions', packed, ctx({ items }))).toBe('Potion of Healing, 1 left. Torch, 5 left.')
+    expect(answerQuery('equipped', packed, ctx({ items, activeToggles: [] }))).toBe(
+      'Nothing in hand. Carrying Potion of Healing with 1 left and Torch with 5 left.',
     )
   })
 })

@@ -117,7 +117,7 @@ function describeBonus(b: DiceResult): string {
  * "a 3 plus 4 from modifiers", "3 and 5, plus 4 from modifiers",
  * "5 from a d8, plus 3 from a d6, plus 4 from modifiers", or for raw dice "4 and 6, plus 3".
  */
-function describeDice(r: DiceResult, flatFrom?: string): string {
+export function describeDice(r: DiceResult, flatFrom?: string): string {
   if (r.terms.length === 0) return String(r.flat)
   const single = r.terms.length === 1 && r.terms[0].values.length === 1
   let s: string
