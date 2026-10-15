@@ -1,9 +1,16 @@
 /**
  * Answers to slash questions: /ac, /passive, /skills, /saves, /attacks,
- * /equipped, /potions, /hp, /status, or the name of a skill, ability, or
- * attack. Nothing here rolls.
+ * /equipped, /inventory, /potions, /hp, /status, or the name of a skill,
+ * ability, or attack. Nothing here rolls.
  */
-import { ABILITY_NAMES, type Character, type DerivedAttack, type DerivedSkill, type Proficiency } from './character'
+import {
+  ABILITY_NAMES,
+  type ArmorClassPart,
+  type Character,
+  type DerivedAttack,
+  type DerivedSkill,
+  type Proficiency,
+} from './character'
 import { allCandidates, listOr, matchQuery, type Candidate } from './candidates'
 import { formatDiceExpr } from './dice'
 import { describeHp, type HitPoints } from './hitpoints'
@@ -17,6 +24,8 @@ export interface StatusContext {
   pendingCrit: string | null
   /** Attack name in hand, or null. */
   inHand: string | null
+  /** Armor item worn, or null. */
+  wearing: string | null
   /** What is left of each consumable, by name. */
   items: Record<string, number>
 }
@@ -24,7 +33,7 @@ export interface StatusContext {
 export const NO_HP = 'No hit points on this character yet. Add hitPoints with a max to the character file.'
 export const NO_AC = 'No armor class on this character yet. Add armorClass parts to the character file.'
 export const UNKNOWN_TOPIC =
-  'Try /ac, /passive, /skills, /saves, /attacks, /equipped, /potions, /hp, /status, or the name of a skill, ability, or attack.'
+  'Try /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /potions, /hp, /status, or the name of a skill, ability, or attack.'
 
 export const plusWord = (n: number): string => (n < 0 ? `minus ${-n}` : `plus ${n}`)
 
@@ -46,7 +55,7 @@ export function answerQuery(topic: string, ch: Character, ctx: StatusContext): s
     case 'ac':
     case 'armor':
     case 'armor class':
-      return describeArmorClass(ch, ctx.activeToggles)
+      return describeArmorClass(ch, ctx.activeToggles, ctx.wearing)
     case 'passive':
     case 'passives':
       return describePassives(ch)
@@ -63,6 +72,9 @@ export function answerQuery(topic: string, ch: Character, ctx: StatusContext): s
     case 'gear':
     case 'wielding':
       return describeEquipped(ch, ctx)
+    case 'inventory':
+    case 'i':
+      return describeInventory(ch, ctx)
     case 'potions':
     case 'consumables':
     case 'items':
@@ -118,24 +130,57 @@ function describeCandidate(c: Candidate, ch: Character): string {
 
 const describeSkill = (s: DerivedSkill): string => `${s.name} ${plusWord(s.modifier)}, ${PROFICIENCY_WORD[s.proficiency]}.`
 
-/** The armor class parts plus every armor toggle that is on; null when the file gives no armor class. */
-export function armorClassTotal(ch: Character, activeToggles: string[]): number | null {
-  if (!ch.armorClass) return null
-  const base = ch.armorClass.reduce((s, p) => s + p.value, 0)
+/**
+ * The armor class parts in force: the worn armor's base plus Dexterity as it
+ * allows, otherwise the file's unarmored parts (or 10 plus Dexterity when the
+ * character owns armor but the file gives no unarmored formula); then the
+ * flat bonuses. Null when there is nothing to go on.
+ */
+export function armorParts(ch: Character, wearing: string | null): ArmorClassPart[] | null {
+  const dex = ch.abilities.dex.modifier
+  const worn = wearing ? ch.items.find((i) => i.kind === 'armor' && i.name === wearing) : undefined
+  if (worn && worn.baseAc !== null) {
+    const parts: ArmorClassPart[] = [{ name: worn.name, value: worn.baseAc }]
+    if (worn.dexCap !== 0) parts.push({ name: 'Dexterity', value: worn.dexCap === null ? dex : Math.min(dex, worn.dexCap) })
+    return [...parts, ...ch.armorBonuses]
+  }
+  const base =
+    ch.armorClass ??
+    (ch.items.some((i) => i.kind === 'armor')
+      ? [
+          { name: 'unarmored', value: 10 },
+          { name: 'Dexterity', value: dex },
+        ]
+      : null)
+  return base ? [...base, ...ch.armorBonuses] : null
+}
+
+/** The name of what is worn, else the unarmored formula's name, else null. */
+export function armorName(ch: Character, wearing: string | null): string | null {
+  const parts = armorParts(ch, wearing)
+  return parts ? parts[0].name : null
+}
+
+/** The parts plus every armor toggle that is on; null when the file gives no armor class. */
+export function armorClassTotal(ch: Character, activeToggles: string[], wearing: string | null): number | null {
+  const parts = armorParts(ch, wearing)
+  if (!parts) return null
+  const base = parts.reduce((s, p) => s + p.value, 0)
   const extra = ch.toggles.filter((t) => t.acBonus !== 0 && activeToggles.includes(t.name)).reduce((s, t) => s + t.acBonus, 0)
   return base + extra
 }
 
 /** "Armor class 18: unarmored defense 10, Dexterity plus 2, Constitution plus 4, plus 2 from Shield. Shield spell is off." */
-export function describeArmorClass(ch: Character, activeToggles: string[]): string {
-  const total = armorClassTotal(ch, activeToggles)
-  if (!ch.armorClass || total === null) return NO_AC
+export function describeArmorClass(ch: Character, activeToggles: string[], wearing: string | null): string {
+  const parts = armorParts(ch, wearing)
+  const total = armorClassTotal(ch, activeToggles, wearing)
+  if (!parts || total === null) return NO_AC
   const acToggles = ch.toggles.filter((t) => t.acBonus !== 0)
   const on = acToggles.filter((t) => activeToggles.includes(t.name))
   const off = acToggles.filter((t) => !activeToggles.includes(t.name))
-  const parts = ch.armorClass.map((p, i) => (i === 0 ? `${p.name} ${p.value}` : `${p.name} ${plusWord(p.value)}`))
+  const spoken = parts.map((p, i) => (i === 0 ? `${p.name} ${p.value}` : `${p.name} ${plusWord(p.value)}`))
   const extras = on.map((t) => `${plusWord(t.acBonus)} from ${t.name}`)
-  let s = `Armor class ${total}: ${[...parts, ...extras].join(', ')}.`
+  let s = `Armor class ${total}: ${[...spoken, ...extras].join(', ')}.`
   if (off.length) s += ` ${off.map((t) => t.name).join(' and ')} ${off.length === 1 ? 'is' : 'are'} off.`
   return s
 }
@@ -176,9 +221,40 @@ export function describeEquipped(ch: Character, ctx: StatusContext): string {
   for (const t of ch.toggles.filter((x) => x.acBonus !== 0)) {
     parts.push(`${t.name} ${ctx.activeToggles.includes(t.name) ? 'on' : 'off'}.`)
   }
-  if (ch.armorClass) parts.push(`Armor: ${ch.armorClass[0].name}.`)
+  const armor = armorName(ch, ctx.wearing)
+  if (armor) parts.push(`Armor: ${armor}.`)
   if (ch.consumables.length) parts.push(`Carrying ${carryingList(ch, ctx.items)}.`)
   return parts.join(' ')
+}
+
+/**
+ * The whole inventory, section by section, as the HUD lays it out:
+ * "Weapons: Flail in hand, Warhammer. Armor and shields: Chain shirt worn, Shield on. Potions: ..."
+ */
+export function describeInventory(ch: Character, ctx: StatusContext): string {
+  const left = (name: string, count: number) => ctx.items[name] ?? count
+  const section = (title: string, entries: string[]) => `${title}: ${entries.length ? entries.join(', ') : 'none'}.`
+  const weapons = ch.items.filter((i) => i.kind === 'weapon')
+  const weaponEntries = weapons.length
+    ? weapons.map((i) => `${i.name}${i.attack && ctx.inHand === i.attack ? ' in hand' : ''}`)
+    : ch.attacks.map((a) => `${a.name}${ctx.inHand === a.name ? ' in hand' : ''}`)
+  const armorEntries = ch.items
+    .filter((i) => i.kind === 'armor' || i.kind === 'shield' || (i.acBonus !== 0 && i.kind !== 'weapon'))
+    .map((i) =>
+      i.kind === 'armor' ? `${i.name}${ctx.wearing === i.name ? ' worn' : ''}` : `${i.name} ${ctx.activeToggles.includes(i.name) ? 'on' : 'off'}`,
+    )
+  const potionEntries = ch.items.filter((i) => i.kind === 'potion').map((i) => `${i.name} with ${left(i.name, i.count)} left`)
+  const utilityEntries = ch.items
+    .filter((i) => i.kind === 'utility' && i.acBonus === 0)
+    .map((i) => (i.consumable ? `${i.name} with ${left(i.name, i.count)} left` : i.count > 1 ? `${i.count} ${i.name}` : i.name))
+  const questEntries = ch.items.filter((i) => i.kind === 'quest').map((i) => i.name)
+  return [
+    section('Weapons', weaponEntries),
+    section('Armor and shields', armorEntries),
+    section('Potions', potionEntries),
+    section('Utility', utilityEntries),
+    section('Quest items', questEntries),
+  ].join(' ')
 }
 
 /** "Potion of Healing, 2 left. Torch, 5 left." */

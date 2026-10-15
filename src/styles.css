@@ -229,3 +229,33 @@ dialog::backdrop {
     animation: none !important;
   }
 }
+
+/* Text for screen readers only: item descriptions referenced by aria-describedby. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* HUD dialogs: wider, scrollable, with one h3 per section. */
+dialog.hud {
+  width: min(56rem, 94vw);
+  max-height: 90vh;
+  overflow: auto;
+}
+
+dialog h3 {
+  font-size: 1.1rem;
+  margin: 1.25rem 0 0.5rem;
+}
+
+dialog:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
+}

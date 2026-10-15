@@ -67,6 +67,9 @@ export const SKILLS: readonly SkillDef[] = [
 
 export type Proficiency = 'none' | 'half' | 'proficient' | 'expertise'
 
+export type ItemKind = 'weapon' | 'armor' | 'shield' | 'potion' | 'utility' | 'quest'
+export const ITEM_KINDS: readonly ItemKind[] = ['weapon', 'armor', 'shield', 'potion', 'utility', 'quest']
+
 /**
  * The JSON a player writes or imports. Everything is optional and forgiving:
  * names are case-insensitive, "Sleight of Hand" / "sleight_of_hand" / "soh" all work,
@@ -101,42 +104,22 @@ export interface CharacterFile {
   attacks?: AttackFile[]
   /** Named dice expressions: Healing Word 1d4+3, Fireball 8d6, Surprise Attack 2d6. */
   custom?: { name: string; dice: string; aliases?: string[] }[]
-  /** Switchable modifiers: Rage +2 damage, Sneak Attack +3d6, a shield +2 AC, the Shield spell +5 AC. */
+  /** Switchable modifiers: Rage +2 damage, Sneak Attack +3d6, the Shield spell +5 AC. */
   toggles?: ToggleFile[]
-  /** Potions and other things with a count, used by name: drink healing. */
+  /** Potions and other things with a count, used by name: drink healing. Inventory items can do the same. */
   consumables?: ConsumableFile[]
+  /** Everything carried: weapons, armor, shields, potions, utility, quest items. */
+  inventory?: ItemFile[]
   /** Maximum hit points. Current hit points are tracked in the app, per device. */
   hitPoints?: { max: number }
   /**
-   * What makes up armor class before toggles, in the order it is spoken:
+   * Armor class while wearing no armor, in the order it is spoken:
    * [{ "name": "unarmored defense", "value": 10 }, { "name": "Dexterity", "value": 2 }].
+   * Worn armor from the inventory replaces these parts; bonuses apply either way.
    */
-  armorClass?: { parts: { name: string; value: number }[] }
+  armorClass?: { parts: { name: string; value: number }[]; bonuses?: { name: string; value: number }[] }
   /** Your own shortcuts, for example { "hide": "stealth" }. */
   aliases?: Record<string, string>
-}
-
-export interface ToggleFile {
-  name: string
-  /** Added to the attack roll while on. */
-  attackBonus?: number
-  /** Added to damage while on. */
-  damageBonus?: number
-  /** Extra damage dice while on, like "3d6". Doubled on a critical hit like any damage dice. */
-  damageDice?: string
-  /** Added to armor class while on: a shield, the Shield spell, a potion. */
-  acBonus?: number
-  /** Starts switched on, for an equipped item. Default off. */
-  on?: boolean
-  /** Attack names or aliases this applies to. Leave out for every attack. */
-  appliesTo?: string[]
-  /** Extra words that switch it: "raging", "sneak". */
-  aliases?: string[]
-}
-
-export interface ArmorClassPart {
-  name: string
-  value: number
 }
 
 export interface AttackFile {
@@ -171,6 +154,54 @@ export interface ConsumableFile {
   toggle?: string
   /** Extra words that name it: "healing", "potion". */
   aliases?: string[]
+}
+
+export interface ItemFile {
+  name: string
+  /** weapon, armor, shield, potion, utility, or quest. Default utility. */
+  kind?: string
+  /** How many you carry. Default 1. */
+  count?: number
+  /** Read after the name in the inventory, and on request. */
+  description?: string
+  aliases?: string[]
+  /** Weapon: the attack it makes. Default: the attack with the same name. */
+  attack?: string
+  /** Armor: base armor class, and the most Dexterity it allows. Leave dexCap out for no limit, 0 for heavy armor. */
+  baseAc?: number
+  dexCap?: number
+  /** Shield, or any worn item: added to armor class while equipped. */
+  acBonus?: number
+  /** Potion or utility: healing dice, or a toggle switched on, when used. */
+  heal?: string
+  toggle?: string
+  /** Utility: counts down when used even without an effect. Torches, rations, arrows. */
+  consumable?: boolean
+  /** Starts in hand, worn, or equipped on a new device. */
+  equipped?: boolean
+}
+
+export interface ToggleFile {
+  name: string
+  /** Added to the attack roll while on. */
+  attackBonus?: number
+  /** Added to damage while on. */
+  damageBonus?: number
+  /** Extra damage dice while on, like "3d6". Doubled on a critical hit like any damage dice. */
+  damageDice?: string
+  /** Added to armor class while on: a shield, the Shield spell, a potion. */
+  acBonus?: number
+  /** Starts switched on, for an equipped item. Default off. */
+  on?: boolean
+  /** Attack names or aliases this applies to. Leave out for every attack. */
+  appliesTo?: string[]
+  /** Extra words that switch it: "raging", "sneak". */
+  aliases?: string[]
+}
+
+export interface ArmorClassPart {
+  name: string
+  value: number
 }
 
 export interface AbilityBlock {
@@ -217,6 +248,28 @@ export interface DerivedConsumable {
   aliases: string[]
 }
 
+export interface DerivedItem {
+  name: string
+  kind: ItemKind
+  count: number
+  /** Counts down when used: potions, and utility items marked consumable or with an effect. */
+  consumable: boolean
+  description: string | null
+  aliases: string[]
+  /** Weapon: the attack name. */
+  attack: string | null
+  /** Armor: base armor class and Dexterity cap (null: no cap). */
+  baseAc: number | null
+  dexCap: number | null
+  /** Shield or worn item: armor class while equipped; it is also a toggle of the same name. */
+  acBonus: number
+  /** Consumable effects: healing dice, or a toggle switched on. */
+  heal: DiceExpr | null
+  toggle: string | null
+  /** Starts in hand, worn, or equipped. */
+  equipped: boolean
+}
+
 export interface DerivedCustom {
   name: string
   dice: DiceExpr
@@ -250,12 +303,17 @@ export interface Character {
   initiative: number
   attacks: DerivedAttack[]
   custom: DerivedCustom[]
+  /** File toggles plus one per shield or worn armor-class item in the inventory. */
   toggles: DerivedToggle[]
+  /** File consumables plus every potion and consumable utility item in the inventory. */
   consumables: DerivedConsumable[]
+  items: DerivedItem[]
   /** Null when the file gives no hit points. */
   hitPointsMax: number | null
-  /** Null when the file gives no armor class. */
+  /** Armor class parts while wearing no armor; null when the file gives none. */
   armorClass: ArmorClassPart[] | null
+  /** Flat armor class bonuses that apply with or without armor. */
+  armorBonuses: ArmorClassPart[]
   aliases: Record<string, string>
 }
 
@@ -291,7 +349,7 @@ const ABILITY_LOOKUP: Record<string, Ability> = {
 }
 
 const normKey = (s: string): string => s.trim().toLowerCase().replace(/[\s_]+/g, '-')
-const normName = (s: string): string => s.trim().toLowerCase().replace(/[\s_-]+/g, ' ')
+export const normName = (s: string): string => s.trim().toLowerCase().replace(/[\s_-]+/g, ' ')
 
 function toAbility(raw: string, context: string): Ability {
   const a = ABILITY_LOOKUP[normKey(raw)]
@@ -335,6 +393,35 @@ function stringList(raw: unknown, context: string): string[] {
     throw new CharacterError(`${context}: expected a list of names.`)
   }
   return raw as string[]
+}
+
+function requireName(raw: unknown, context: string, what: string): string {
+  if (!raw || typeof raw !== 'object' || typeof (raw as { name?: unknown }).name !== 'string') {
+    throw new CharacterError(`${context}: every ${what} needs a name.`)
+  }
+  const name = ((raw as { name: string }).name ?? '').trim()
+  if (!name) throw new CharacterError(`${context}: every ${what} needs a name.`)
+  return name
+}
+
+/** Parses an optional dice field; the error names the field: "toggles[1] (Bless): damageDice must be dice like 3d6." */
+function optionalDice(raw: unknown, context: string, field: string, example: string): DiceExpr | null {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return null
+  const dice = parseDiceExpr(String(raw))
+  if (!dice) throw new CharacterError(`${context}: ${field} must be dice like ${example}.`)
+  return dice
+}
+
+function acParts(raw: unknown, context: string): ArmorClassPart[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new CharacterError(`${context}: expected a list like [{ "name": "unarmored defense", "value": 10 }].`)
+  }
+  return raw.map((p, i) => {
+    const name = requireName(p, `${context}[${i + 1}]`, 'part')
+    const value = numberOr((p as { value?: unknown }).value, NaN, `${context}[${i + 1}].value`)
+    if (!Number.isFinite(value)) throw new CharacterError(`${context}: every part needs a value.`)
+    return { name, value }
+  })
 }
 
 export function deriveCharacter(file: CharacterFile): Character {
@@ -412,13 +499,11 @@ export function deriveCharacter(file: CharacterFile): Character {
 
   const attacks: DerivedAttack[] = (file.attacks ?? []).map((a, i) => {
     const context = `attacks[${i + 1}]`
-    if (!a || typeof a !== 'object' || typeof a.name !== 'string' || !a.name.trim()) {
-      throw new CharacterError(`${context}: every attack needs a name.`)
-    }
-    const ability = a.ability ? toAbility(a.ability, `${context} (${a.name})`) : 'str'
+    const name = requireName(a, context, 'attack')
+    const ability = a.ability ? toAbility(a.ability, `${context} (${name})`) : 'str'
     const dmg = parseDiceExpr(String(a.damage ?? ''))
     if (!dmg || dmg.terms.length === 0) {
-      throw new CharacterError(`${context} (${a.name}): damage must be dice like 1d8 or 2d6.`)
+      throw new CharacterError(`${context} (${name}): damage must be dice like 1d8 or 2d6.`)
     }
     const abilityMod = abilities[ability].modifier
     const toHit =
@@ -430,7 +515,7 @@ export function deriveCharacter(file: CharacterFile): Character {
       (a.addAbilityToDamage === false ? 0 : abilityMod) +
       numberOr(a.damageBonus, 0, `${context}.damageBonus`)
     return {
-      name: a.name.trim(),
+      name,
       ability,
       toHit,
       damage: { terms: dmg.terms, flat },
@@ -442,30 +527,23 @@ export function deriveCharacter(file: CharacterFile): Character {
 
   const custom: DerivedCustom[] = (file.custom ?? []).map((c, i) => {
     const context = `custom[${i + 1}]`
-    if (!c || typeof c !== 'object' || typeof c.name !== 'string' || !c.name.trim()) {
-      throw new CharacterError(`${context}: every custom roll needs a name.`)
-    }
+    const name = requireName(c, context, 'custom roll')
     const dice = parseDiceExpr(String(c.dice ?? ''))
     if (!dice || dice.terms.length === 0) {
-      throw new CharacterError(`${context} (${c.name}): dice must be an expression like 3d6 or 1d4+3.`)
+      throw new CharacterError(`${context} (${name}): dice must be an expression like 3d6 or 1d4+3.`)
     }
-    return { name: c.name.trim(), dice, aliases: stringList(c.aliases, `${context}.aliases`).map(normName) }
+    return { name, dice, aliases: stringList(c.aliases, `${context}.aliases`).map(normName) }
   })
 
   const toggles: DerivedToggle[] = (file.toggles ?? []).map((t, i) => {
     const context = `toggles[${i + 1}]`
-    if (!t || typeof t !== 'object' || typeof t.name !== 'string' || !t.name.trim()) {
-      throw new CharacterError(`${context}: every toggle needs a name.`)
-    }
-    let damageDice: DiceExpr | null = null
-    if (t.damageDice !== undefined && t.damageDice !== null && String(t.damageDice).trim() !== '') {
-      damageDice = parseDiceExpr(String(t.damageDice))
-      if (!damageDice || damageDice.terms.length === 0) {
-        throw new CharacterError(`${context} (${t.name}): damageDice must be dice like 3d6.`)
-      }
+    const name = requireName(t, context, 'toggle')
+    const damageDice = optionalDice(t.damageDice, `${context} (${name})`, 'damageDice', '3d6')
+    if (damageDice && damageDice.terms.length === 0) {
+      throw new CharacterError(`${context} (${name}): damageDice must be dice like 3d6.`)
     }
     return {
-      name: t.name.trim(),
+      name,
       attackBonus: numberOr(t.attackBonus, 0, `${context}.attackBonus`),
       damageBonus: numberOr(t.damageBonus, 0, `${context}.damageBonus`),
       damageDice,
@@ -478,32 +556,106 @@ export function deriveCharacter(file: CharacterFile): Character {
       aliases: stringList(t.aliases, `${context}.aliases`).map(normName),
     }
   })
+  const addToggle = (t: DerivedToggle, context: string) => {
+    if (toggles.some((x) => normName(x.name) === normName(t.name))) {
+      throw new CharacterError(`${context}: there is already a toggle called "${t.name}".`)
+    }
+    toggles.push(t)
+  }
+
+  const items: DerivedItem[] = (file.inventory ?? []).map((it, i) => {
+    const context = `inventory[${i + 1}]`
+    const name = requireName(it, context, 'item')
+    const kindRaw = it.kind === undefined || it.kind === null ? 'utility' : String(it.kind).trim().toLowerCase()
+    const kind = ITEM_KINDS.find((k) => k === kindRaw)
+    if (!kind) throw new CharacterError(`${context} (${name}): kind must be one of ${ITEM_KINDS.join(', ')}.`)
+    const count = numberOr(it.count, 1, `${context}.count`)
+    if (!Number.isInteger(count) || count < 0) throw new CharacterError(`${context} (${name}): count must be a whole number.`)
+    const heal = optionalDice(it.heal, `${context} (${name})`, 'heal', '2d4+2')
+    let toggle: string | null = null
+    if (it.toggle !== undefined && it.toggle !== null && String(it.toggle).trim() !== '') {
+      const wanted = normName(String(it.toggle))
+      const found = toggles.find((t) => normName(t.name) === wanted || t.aliases.includes(wanted))
+      if (!found) throw new CharacterError(`${context} (${name}): toggle "${it.toggle}" is not one of this character's toggles.`)
+      toggle = found.name
+    }
+    let attack: string | null = null
+    if (kind === 'weapon') {
+      const wanted = normName(String(it.attack ?? name))
+      const found = attacks.find((a) => normName(a.name) === wanted || a.aliases.includes(wanted))
+      if (!found) {
+        throw new CharacterError(`${context} (${name}): no attack called "${it.attack ?? name}". Add it to attacks.`)
+      }
+      attack = found.name
+    }
+    let baseAc: number | null = null
+    let dexCap: number | null = null
+    if (kind === 'armor') {
+      baseAc = numberOr(it.baseAc, NaN, `${context}.baseAc`)
+      if (!Number.isFinite(baseAc)) throw new CharacterError(`${context} (${name}): armor needs a baseAc, like 13 for a chain shirt.`)
+      dexCap = it.dexCap === undefined || it.dexCap === null ? null : numberOr(it.dexCap, 0, `${context}.dexCap`)
+    }
+    const acBonus = numberOr(it.acBonus, kind === 'shield' ? 2 : 0, `${context}.acBonus`)
+    const equipped = it.equipped === true
+    const consumable = kind === 'potion' || it.consumable === true || heal !== null || toggle !== null
+    const description =
+      typeof it.description === 'string' && it.description.trim() ? it.description.trim() : null
+    const item: DerivedItem = {
+      name,
+      kind,
+      count,
+      consumable,
+      description,
+      aliases: stringList(it.aliases, `${context}.aliases`).map(normName),
+      attack,
+      baseAc,
+      dexCap,
+      acBonus,
+      heal,
+      toggle,
+      equipped,
+    }
+    if (kind !== 'armor' && acBonus !== 0) {
+      addToggle(
+        { name, attackBonus: 0, damageBonus: 0, damageDice: null, acBonus, on: equipped, appliesTo: null, aliases: item.aliases },
+        `${context} (${name})`,
+      )
+    }
+    return item
+  })
+  const itemNames = new Set<string>()
+  for (const it of items) {
+    const key = normName(it.name)
+    if (itemNames.has(key)) throw new CharacterError(`inventory: there are two items called "${it.name}".`)
+    itemNames.add(key)
+  }
 
   const consumables: DerivedConsumable[] = (file.consumables ?? []).map((c, i) => {
     const context = `consumables[${i + 1}]`
-    if (!c || typeof c !== 'object' || typeof c.name !== 'string' || !c.name.trim()) {
-      throw new CharacterError(`${context}: every consumable needs a name.`)
-    }
+    const name = requireName(c, context, 'consumable')
     const count = numberOr(c.count, 1, `${context}.count`)
     if (!Number.isInteger(count) || count < 0) {
-      throw new CharacterError(`${context} (${c.name}): count must be a whole number.`)
+      throw new CharacterError(`${context} (${name}): count must be a whole number.`)
     }
-    let heal: DiceExpr | null = null
-    if (c.heal !== undefined && c.heal !== null && String(c.heal).trim() !== '') {
-      heal = parseDiceExpr(String(c.heal))
-      if (!heal) throw new CharacterError(`${context} (${c.name}): heal must be dice like 2d4+2.`)
-    }
+    const heal = optionalDice(c.heal, `${context} (${name})`, 'heal', '2d4+2')
     let toggle: string | null = null
     if (c.toggle !== undefined && c.toggle !== null && String(c.toggle).trim() !== '') {
       const wanted = normName(String(c.toggle))
       const found = toggles.find((t) => normName(t.name) === wanted || t.aliases.includes(wanted))
       if (!found) {
-        throw new CharacterError(`${context} (${c.name}): toggle "${c.toggle}" is not one of this character's toggles.`)
+        throw new CharacterError(`${context} (${name}): toggle "${c.toggle}" is not one of this character's toggles.`)
       }
       toggle = found.name
     }
-    return { name: c.name.trim(), count, heal, toggle, aliases: stringList(c.aliases, `${context}.aliases`).map(normName) }
+    return { name, count, heal, toggle, aliases: stringList(c.aliases, `${context}.aliases`).map(normName) }
   })
+  for (const it of items) {
+    if (!it.consumable) continue
+    if (consumables.some((c) => normName(c.name) === normName(it.name))) {
+      throw new CharacterError(`inventory (${it.name}): it is already listed under consumables.`)
+    }
+    consumables.push({ name: it.name, count: it.count, heal: it.heal, toggle: it.toggle, aliases: it.aliases })
+  }
 
   const aliases: Record<string, string> = {}
   for (const [k, v] of Object.entries(file.aliases ?? {})) {
@@ -519,18 +671,12 @@ export function deriveCharacter(file: CharacterFile): Character {
   }
 
   let armorClass: ArmorClassPart[] | null = null
+  let armorBonuses: ArmorClassPart[] = []
   if (file.armorClass !== undefined && file.armorClass !== null) {
-    const parts = file.armorClass.parts
-    if (!Array.isArray(parts) || parts.length === 0) {
-      throw new CharacterError('armorClass.parts: expected a list like [{ "name": "unarmored defense", "value": 10 }].')
+    armorClass = acParts(file.armorClass.parts, 'armorClass.parts')
+    if (file.armorClass.bonuses !== undefined && file.armorClass.bonuses !== null && Array.isArray(file.armorClass.bonuses) && file.armorClass.bonuses.length) {
+      armorBonuses = acParts(file.armorClass.bonuses, 'armorClass.bonuses')
     }
-    armorClass = parts.map((p, i) => {
-      if (!p || typeof p !== 'object' || typeof p.name !== 'string' || !p.name.trim()) {
-        throw new CharacterError(`armorClass.parts[${i + 1}]: every part needs a name.`)
-      }
-      return { name: p.name.trim(), value: numberOr(p.value, NaN, `armorClass.parts[${i + 1}].value`) }
-    })
-    if (armorClass.some((p) => !Number.isFinite(p.value))) throw new CharacterError('armorClass.parts: every part needs a value.')
   }
 
   return {
@@ -545,17 +691,12 @@ export function deriveCharacter(file: CharacterFile): Character {
     custom,
     toggles,
     consumables,
+    items,
     hitPointsMax,
     armorClass,
+    armorBonuses,
     aliases,
   }
-}
-
-/** True when the toggle names the attack (by name or alias) in appliesTo, or lists nothing. */
-export function toggleApplies(toggle: DerivedToggle, attack: DerivedAttack): boolean {
-  if (toggle.appliesTo === null) return true
-  const names = [normName(attack.name), ...attack.aliases]
-  return toggle.appliesTo.some((n) => names.includes(n))
 }
 
 /** Parses character JSON text. Throws CharacterError with a message fit to be read aloud. */
@@ -570,4 +711,11 @@ export function parseCharacterFile(text: string): Character {
     throw new CharacterError('Character file must be a JSON object with keys like name, level, abilities.')
   }
   return deriveCharacter(data as CharacterFile)
+}
+
+/** True when the toggle names the attack (by name or alias) in appliesTo, or lists nothing. */
+export function toggleApplies(toggle: DerivedToggle, attack: DerivedAttack): boolean {
+  if (toggle.appliesTo === null) return true
+  const names = [normName(attack.name), ...attack.aliases]
+  return toggle.appliesTo.some((n) => names.includes(n))
 }

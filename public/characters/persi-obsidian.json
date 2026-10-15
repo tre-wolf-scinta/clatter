@@ -96,6 +96,18 @@
       ]
     }
   ],
+  "inventory": [
+    {
+      "name": "Flail",
+      "description": "Proficiency with a Flail allows you to add your proficiency bonus to the attack roll for any attack you make with it. This weapon has the following mastery property. To use this property, you must have a feature that lets you use it. Sap. If you hit a creature with this weapon, that creature has Disadvantage on its next attack roll before the start of your next turn.",
+      "kind": "weapon"
+    },
+    {
+      "name": "Warhammer",
+      "description": "Proficiency with a Warhammer allows you to add your proficiency bonus to the attack roll for any attack you make with it. This weapon has the following mastery property. To use this property, you must have a feature that lets you use it. Push. If you hit a creature with this weapon, you can push the creature up to 10 feet straight away from yourself if it is Large or smaller.",
+      "kind": "weapon"
+    }
+  ],
   "hitPoints": {
     "max": 60
   },
@@ -121,6 +133,6 @@
     "classes": [
       "Barbarian 5 (Path of the Beast (TCoE))"
     ],
-    "importedAt": "2026-09-09"
+    "importedAt": "2026-10-15"
   }
 }

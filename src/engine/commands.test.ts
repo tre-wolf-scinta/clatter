@@ -4,11 +4,13 @@ import {
   HELP_TEXT,
   NOTHING_IN_HAND,
   allCandidates,
+  applyBatch,
   extractToggles,
   initialRollerState,
   matchQuery,
   parseCommand,
   runCommand,
+  type BatchOp,
   type Candidate,
   type RollerState,
 } from './commands'
@@ -58,6 +60,17 @@ describe('parseCommand', () => {
     expect(parseCommand('drink a potion of healing')).toEqual({ kind: 'use', query: 'potion of healing', verb: 'drink' })
     expect(parseCommand('use torch')).toEqual({ kind: 'use', query: 'torch', verb: 'use' })
     expect(parseCommand('take potion')).toEqual({ kind: 'use', query: 'potion', verb: 'take' })
+    expect(parseCommand('wear chain shirt')).toEqual({ kind: 'wield', query: 'chain shirt' })
+    expect(parseCommand('doff armor')).toEqual({ kind: 'unequip', query: 'armor' })
+  })
+
+  it('HUD screens', () => {
+    expect(parseCommand('/i')).toEqual({ kind: 'hud', screen: 'inventory' })
+    expect(parseCommand('/inventory')).toEqual({ kind: 'hud', screen: 'inventory' })
+    expect(parseCommand('/s')).toEqual({ kind: 'hud', screen: 'spells' })
+    expect(parseCommand('/f')).toEqual({ kind: 'hud', screen: 'abilities' })
+    expect(parseCommand('/feats')).toEqual({ kind: 'hud', screen: 'abilities' })
+    expect(parseCommand('/int')).toEqual({ kind: 'query', topic: 'int' })
   })
 
   it('hit point commands', () => {
@@ -431,7 +444,10 @@ describe('consumables', () => {
     expect(run('drink', start()).outcome.text).toBe(`Use what? ${carry}`)
     expect(run('use xyz', start()).outcome.text).toBe(`Nothing called xyz to use. ${carry}`)
     expect(run('/potions', start()).outcome.text).toBe('Potion of Healing, 2 left. Potion of Giant Strength, 1 left. Torch, 3 left.')
-    expect(say('use torch', [0.5]).outcome.text).toBe('Nothing called torch to use. You carry Potion of Healing with 2 left.')
+    expect(say('use torch', [0.5]).outcome.text).toBe('Used a Torch. 4 left.')
+    expect(say('use xyz', [0.5]).outcome.text).toBe(
+      'Nothing called xyz to use. You carry Potion of Healing with 2 left and Torch with 5 left.',
+    )
   })
 
   it('a healing potion without hit points on the character still counts down', () => {
@@ -463,7 +479,89 @@ describe('runCommand messages', () => {
     expect(say('/stealth', [0.5]).outcome).toEqual({ text: 'Stealth plus 10, expertise.', result: null })
     expect(say('/skills', [0.5]).outcome.text).toContain('Proficient: Acrobatics plus 7')
     expect(say('/hp', [0.5]).outcome.text).toBe(NO_HP)
-    expect(say('/ac', [0.5]).outcome.text).toBe('Armor class 15: leather armor 11, Dexterity plus 4.')
+    expect(say('/ac', [0.5]).outcome.text).toBe('Armor class 14: unarmored 10, Dexterity plus 4.')
+    expect(say('/ac', [0.5], { ...initialRollerState(), wearing: 'Leather armor' }).outcome.text).toBe(
+      'Armor class 15: Leather armor 11, Dexterity plus 4.',
+    )
+    expect(say('/s', [0.5]).outcome.text).toBe('Spells are not built yet.')
+  })
+})
+
+describe('armor, the inventory readout, and batches', () => {
+  const knight = deriveCharacter({
+    level: 5,
+    abilities: { str: 16, dex: 14 },
+    attacks: [{ name: 'Longsword', damage: '1d8', damageType: 'slashing' }],
+    inventory: [
+      { name: 'Longsword', kind: 'weapon', equipped: true },
+      { name: 'Chain shirt', kind: 'armor', baseAc: 13, dexCap: 2, equipped: true },
+      { name: 'Plate', kind: 'armor', baseAc: 18, dexCap: 0 },
+      { name: 'Shield', kind: 'shield', equipped: true },
+      { name: 'Potion of Healing', kind: 'potion', count: 1, heal: '2d4+2', aliases: ['healing'] },
+      { name: 'Rope', kind: 'utility', description: 'Fifty feet of hempen rope.' },
+      { name: 'Torch', kind: 'utility', count: 3, consumable: true },
+      { name: 'Signet ring', kind: 'quest' },
+    ],
+    hitPoints: { max: 44 },
+  })
+  // As the app seeds it: equipped gear in place, 30 of 44 hit points.
+  const ready = (): RollerState => ({
+    ...initialRollerState(),
+    inHand: 'Longsword',
+    wearing: 'Chain shirt',
+    activeToggles: ['Shield'],
+    hp: { ...freshHitPoints(44), current: 30 },
+    items: { 'Potion of Healing': 1, Torch: 3 },
+  })
+  const run = (input: string, state: RollerState = ready(), dice: number[] = [0.5]) =>
+    runCommand(input, knight, state, opts, queueRng(dice))
+
+  it('armor class follows the armor worn, and wear and doff change it', () => {
+    expect(run('/ac').outcome.text).toBe('Armor class 17: Chain shirt 13, Dexterity plus 2, plus 2 from Shield.')
+    const plate = run('wear plate')
+    expect(plate.outcome.text).toBe('Plate on. Armor class 20.')
+    expect(plate.state.wearing).toBe('Plate')
+    expect(run('/ac', plate.state).outcome.text).toBe('Armor class 20: Plate 18, plus 2 from Shield.')
+    const bare = run('doff armor', plate.state)
+    expect(bare.outcome.text).toBe('Plate off. Armor class 14.')
+    expect(run('/ac', bare.state).outcome.text).toBe('Armor class 14: unarmored 10, Dexterity plus 2, plus 2 from Shield.')
+    expect(run('doff shield', bare.state).outcome.text).toBe('Shield off. Armor class 12.')
+    expect(run('wear chain shirt').outcome.text).toBe('Chain shirt is already on.')
+    expect(run('unequip plate').outcome.text).toBe('Plate is not worn.')
+    expect(run('doff armor', bare.state).outcome.text).toBe('No armor on.')
+  })
+
+  it('/equipped and /inventory read the whole picture', () => {
+    expect(run('/equipped').outcome.text).toBe(
+      'Longsword in hand: plus 6 to hit, 1d8+3 slashing. Shield on. Armor: Chain shirt. Carrying Potion of Healing with 1 left and Torch with 3 left.',
+    )
+    const inventory =
+      'Weapons: Longsword in hand. Armor and shields: Chain shirt worn, Plate, Shield on. Potions: Potion of Healing with 1 left. Utility: Rope, Torch with 3 left. Quest items: Signet ring.'
+    expect(run('/inventory').outcome.text).toBe(inventory)
+    expect(run('/i').outcome.text).toBe(inventory)
+  })
+
+  it('a batch from the HUD applies in order, speaks once, and undoes as one', () => {
+    const ops: BatchOp[] = [
+      { op: 'wield', name: null },
+      { op: 'wear', name: 'Plate' },
+      { op: 'toggle', name: 'Shield', on: false },
+      { op: 'use', name: 'Potion of Healing' },
+    ]
+    const done = applyBatch(ready(), ops, knight, opts, queueRng([0.5, 0.25]))
+    expect(done.outcome.text).toBe(
+      'Nothing in hand. Plate on. Armor class 20. Shield off. Armor class 18. Used a Potion of Healing: healed 7. 37 of 44 hit points. You rolled 3 and 2, plus 2. 0 left.',
+    )
+    expect(done.state).toMatchObject({ inHand: null, wearing: 'Plate', activeToggles: [], items: { 'Potion of Healing': 0, Torch: 3 } })
+    expect(done.state.history).toHaveLength(1)
+    const undone = run('undo', done.state)
+    expect(undone.outcome.text).toBe(
+      'Undid the last change. 30 of 44 hit points. Potion of Healing: 1 left. Longsword in hand. Armor class 17.',
+    )
+    expect(undone.state).toMatchObject({ inHand: 'Longsword', wearing: 'Chain shirt', activeToggles: ['Shield'], history: [] })
+    expect(applyBatch(ready(), [], knight, opts).outcome.text).toBe('No changes.')
+    expect(applyBatch(ready(), [{ op: 'wield', name: 'Longsword' }], knight, opts).outcome.text).toBe('No changes.')
+    expect(applyBatch(ready(), [{ op: 'wield', name: 'Longsword' }], knight, opts).state.history).toHaveLength(0)
   })
 })
 

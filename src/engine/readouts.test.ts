@@ -37,6 +37,7 @@ const ctx = (over: Partial<StatusContext> = {}): StatusContext => ({
   stickyMode: 'normal',
   pendingCrit: null,
   inHand: null,
+  wearing: null,
   items: {},
   ...over,
 })
@@ -95,7 +96,36 @@ describe('stats', () => {
   it('ambiguity and unknown topics are said plainly', () => {
     expect(ask('per')).toBe('Ambiguous: Perception, Performance, or Persuasion. Type more letters.')
     expect(ask('xyz')).toBe(
-      'Nothing called xyz. Try /ac, /passive, /skills, /saves, /attacks, /equipped, /potions, /hp, /status, or the name of a skill, ability, or attack.',
+      'Nothing called xyz. Try /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /potions, /hp, /status, or the name of a skill, ability, or attack.',
+    )
+  })
+
+  it('armor class follows the armor worn, with Dexterity capped as the armor allows', () => {
+    const knight = deriveCharacter({
+      abilities: { dex: 16 },
+      inventory: [
+        { name: 'Chain shirt', kind: 'armor', baseAc: 13, dexCap: 2 },
+        { name: 'Plate', kind: 'armor', baseAc: 18, dexCap: 0 },
+        { name: 'Studded leather', kind: 'armor', baseAc: 12 },
+      ],
+      armorClass: {
+        parts: [
+          { name: 'unarmored', value: 10 },
+          { name: 'Dexterity', value: 3 },
+        ],
+        bonuses: [{ name: 'Ring of Protection', value: 1 }],
+      },
+    })
+    const wearing = (name: string | null) => answerQuery('ac', knight, ctx({ activeToggles: [], wearing: name }))
+    expect(wearing(null)).toBe('Armor class 14: unarmored 10, Dexterity plus 3, Ring of Protection plus 1.')
+    expect(wearing('Chain shirt')).toBe('Armor class 16: Chain shirt 13, Dexterity plus 2, Ring of Protection plus 1.')
+    expect(wearing('Plate')).toBe('Armor class 19: Plate 18, Ring of Protection plus 1.')
+    expect(wearing('Studded leather')).toBe('Armor class 16: Studded leather 12, Dexterity plus 3, Ring of Protection plus 1.')
+    expect(answerQuery('equipped', knight, ctx({ activeToggles: [], wearing: 'Plate' }))).toBe('Nothing in hand. Armor: Plate.')
+    const bare = deriveCharacter({ abilities: { dex: 14 }, inventory: [{ name: 'Leather', kind: 'armor', baseAc: 11 }] })
+    expect(answerQuery('ac', bare, ctx({ activeToggles: [] }))).toBe('Armor class 12: unarmored 10, Dexterity plus 2.')
+    expect(answerQuery('inventory', deriveCharacter({}), ctx())).toBe(
+      'Weapons: none. Armor and shields: none. Potions: none. Utility: none. Quest items: none.',
     )
   })
 

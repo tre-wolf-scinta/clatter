@@ -218,7 +218,7 @@ test('the weapon in hand, gear readout, and items', async ({ page }) => {
   await expect(result(page)).toContainText(/Dagger: \d+ to hit\./)
   await type(page, '/equipped')
   await expect(result(page)).toContainText(
-    'Dagger in hand: plus 7 to hit, 1d4+4 piercing. Armor: leather armor. Carrying Potion of Healing with 2 left.',
+    'Dagger in hand: plus 7 to hit, 1d4+4 piercing. Armor: Leather armor. Carrying Potion of Healing with 2 left and Torch with 5 left.',
   )
   await type(page, '-10')
   await expect(result(page)).toContainText('Took 10. 28 of 38 hit points.')
@@ -232,7 +232,47 @@ test('the weapon in hand, gear readout, and items', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Potion of Healing, 0 left' })).toBeDisabled()
   await page.goto('/')
   await type(page, '/equipped')
-  await expect(result(page)).toContainText('Dagger in hand: plus 7 to hit, 1d4+4 piercing. Armor: leather armor. Carrying Potion of Healing with 0 left.')
+  await expect(result(page)).toContainText(
+    'Dagger in hand: plus 7 to hit, 1d4+4 piercing. Armor: Leather armor. Carrying Potion of Healing with 0 left and Torch with 5 left.',
+  )
+})
+
+test('the inventory HUD: open by typing or shortcut, select with toggle buttons, apply with Done', async ({ page }) => {
+  await type(page, '/i')
+  const hud = page.getByRole('dialog', { name: 'Inventory' })
+  await expect(hud).toBeVisible()
+  await expect(hud).toBeFocused()
+  await expect(hud.getByRole('heading', { level: 3 })).toHaveText([
+    'Weapons',
+    'Armor and shields',
+    'Potions',
+    'Utility',
+    'Quest items',
+  ])
+  const rapier = hud.getByRole('button', { name: /^Rapier/ })
+  const dagger = hud.getByRole('button', { name: /^Dagger/ })
+  await expect(rapier).toHaveAttribute('aria-pressed', 'true')
+  await expect(dagger).toHaveAttribute('aria-pressed', 'false')
+  await dagger.click()
+  await expect(dagger).toHaveAttribute('aria-pressed', 'true')
+  await expect(rapier).toHaveAttribute('aria-pressed', 'false')
+  await expect(hud.getByRole('status')).toContainText('Dagger selected, replacing Rapier.')
+  await hud.getByRole('button', { name: 'Potion of Healing, 2 left' }).click()
+  await hud.getByRole('button', { name: 'Letter from the Guildmaster' }).click()
+  await expect(hud.getByRole('status')).toContainText('Sealed with black wax.')
+  await expectNoAxeViolations(page, 'inventory open')
+  await hud.getByRole('button', { name: 'Done' }).click()
+  await expect(hud).toBeHidden()
+  await expect(result(page)).toContainText(/Dagger in hand\. Used a Potion of Healing: healed \d+\. \d+ of 38 hit points\..* 1 left\./)
+  await expect(rollBox(page)).toBeFocused()
+  await page.keyboard.press('Alt+i')
+  await expect(hud).toBeVisible()
+  await hud.getByRole('button', { name: 'Cancel' }).click()
+  await expect(hud).toBeHidden()
+  await type(page, '/equipped')
+  await expect(result(page)).toContainText(
+    'Dagger in hand: plus 7 to hit, 1d4+4 piercing. Armor: Leather armor. Carrying Potion of Healing with 1 left and Torch with 5 left.',
+  )
 })
 
 test('no axe violations on the initial page', async ({ page }) => {

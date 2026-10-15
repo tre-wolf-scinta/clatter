@@ -22,6 +22,7 @@ Type what the DM asked for and press Enter. Focus stays in the box; the result i
 - Skills and abilities: `stealth`, `perception`, `dex`, `wisdom`. Short forms: `perc`, `soh`, `hist`, `ath`, `init`.
 - Saving throws: `dex save`, `wis saving throw`, `death save`.
 - Attacks are two rolls, as at the table: `rapier` rolls to hit ("Rapier: 22 to hit. You rolled a 15 plus 7 from modifiers."), then `dmg` (or `/d`, or `rapier /d`) rolls its damage. A natural 20 makes that damage roll critical on its own; `rapier crit dmg` forces it. `/a` means the roll to hit.
+- The inventory HUD: type `/i` or `/inventory`, press the Inventory button, or press its shortcut (Alt+I in Chrome and Edge, Alt+Shift+I in Firefox; it works even while you are typing). A dialog opens with one heading per section, Weapons, Armor and shields, Potions, Utility, Quest items, and one button per item. H moves between sections, B between items. Items you can equip or use are toggle buttons whose pressed state is what will be true after Done: press the shield to put it on, the axe to put it in hand, a potion to drink one. Weapons and armor are exclusive, so choosing the axe deselects the flail and says so. Done applies everything, closes, puts you back where you were, and reads one summary: "Axe in hand. Shield on. Armor class 18. Used a Potion of Healing: healed 7. 33 of 38 hit points. 1 left." Escape or Cancel discards. One `undo` reverses the whole batch. Plain buttons, such as quest items, read their description instead.
 - The weapon in hand: attacking by name puts that weapon in hand, and so does `wield flail` (also `equip`, `draw`, `hold`). After that, bare `attack` or `/a` rolls to hit with it and `dmg` rolls its damage. `unequip` or `sheathe` puts it away. The character file's `"equipped": true` picks the weapon you start with.
 - Gear and items: `equip shield` and `unequip shield` (also `don`, `doff`) switch a toggle such as a shield and say the new armor class. `drink healing`, `use torch`, or `quaff giant` uses a consumable: "Drank a Potion of Healing: healed 7. 50 of 60 hit points. 2 left." `/equipped` reads what you hold, your shield, your armor, and what you carry; `/potions` reads what is left. `undo` covers items too.
 - Hit points: `-5` takes 5 damage (temporary hit points go first), `take 5` and `heal 7` work too, `+7` heals 7, `temp 8` sets temporary hit points, `hp` reads them, `hp 30` sets them, `undo` reverses the last change, `long rest` resets. At 0 hit points, death saves keep their own count and damage counts as a failure. "Took 5. Temporary hit points used up. 43 of 45 hit points."
@@ -97,17 +98,21 @@ Each toggle is a button next to Advantage (press it to keep it on), a word you c
 
 Current hit points are tracked in the app, per device. Anything that changes armor class while it is on is a toggle with `acBonus`: a shield (`"on": true` because it starts equipped), the Shield spell, a potion. `/ac` adds up the parts and whichever of those are on, and says which are off. The importer fills all of this in from D&D Beyond.
 
-### Consumables
+### Inventory
 
 ```json
-"consumables": [
-  { "name": "Potion of Healing", "count": 2, "heal": "2d4+2", "aliases": ["healing"] },
-  { "name": "Potion of Giant Strength", "count": 1, "toggle": "Giant Strength" },
-  { "name": "Torch", "count": 5 }
+"inventory": [
+  { "name": "Flail", "kind": "weapon", "equipped": true, "description": "A spiked ball on a chain." },
+  { "name": "Chain shirt", "kind": "armor", "baseAc": 13, "dexCap": 2, "equipped": true },
+  { "name": "Shield", "kind": "shield", "equipped": true },
+  { "name": "Potion of Healing", "kind": "potion", "count": 2, "heal": "2d4+2", "aliases": ["healing"] },
+  { "name": "Torch", "kind": "utility", "count": 5, "consumable": true },
+  { "name": "Rope", "kind": "utility", "description": "Fifty feet of hempen rope." },
+  { "name": "Signet ring", "kind": "quest", "description": "The seal of House Varen." }
 ]
 ```
 
-`heal` rolls dice and heals; `toggle` switches one of the character's toggles on; neither just counts down. Counts are tracked per device, and the importer brings potions in from D&D Beyond with the standard healing potions' dice. Each one is also a button under the Items heading.
+Kinds are `weapon`, `armor`, `shield`, `potion`, `utility` (the default), and `quest`. A weapon names an attack (by default, the attack with the same name). Armor gives its `baseAc` and `dexCap`: leave the cap out for light armor, 2 for medium, 0 for heavy; `armorClass.parts` is then the unarmored formula, and `wear chain shirt`, `doff armor`, or the HUD swap what is worn. A shield (or any item with `acBonus`) becomes a toggle you `equip` and `unequip`. Potions, and utility items marked `consumable` or given `heal` or `toggle`, count down when used; counts are tracked per device. `description` is read after the item's name in the HUD. The importer brings all of this in from D&D Beyond, including descriptions; mark quest items yourself. The older top-level `consumables` list still works.
 
 Extra keys when you need them:
 

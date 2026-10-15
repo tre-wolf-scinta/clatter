@@ -217,3 +217,51 @@ describe('equipped weapons and consumables', () => {
     expectError('{"consumables":[{"name":"Potion","toggle":"Haste"}]}', /toggle "Haste" is not one of this character's toggles/)
   })
 })
+
+describe('inventory', () => {
+  const expectError = (text: string, pattern: RegExp) => expect(() => parseCharacterFile(text)).toThrowError(pattern)
+
+  it('derives items and links weapons, shields, and potions into the rest', () => {
+    const ch = deriveCharacter({
+      attacks: [{ name: 'Flail', damage: '1d8' }],
+      inventory: [
+        { name: 'Flail', kind: 'weapon', equipped: true, description: 'A spiked ball on a chain.' },
+        { name: 'Chain shirt', kind: 'armor', baseAc: 13, dexCap: 2 },
+        { name: 'Shield', kind: 'shield', equipped: true },
+        { name: 'Potion of Healing', kind: 'potion', count: 2, heal: '2d4+2' },
+        { name: 'Torch', count: 5, consumable: true },
+        { name: 'Rope' },
+        { name: 'Signet ring', kind: 'quest' },
+      ],
+    })
+    expect(ch.items.map((i) => [i.name, i.kind, i.consumable])).toEqual([
+      ['Flail', 'weapon', false],
+      ['Chain shirt', 'armor', false],
+      ['Shield', 'shield', false],
+      ['Potion of Healing', 'potion', true],
+      ['Torch', 'utility', true],
+      ['Rope', 'utility', false],
+      ['Signet ring', 'quest', false],
+    ])
+    expect(ch.items[0]).toMatchObject({ attack: 'Flail', equipped: true, description: 'A spiked ball on a chain.' })
+    expect(ch.items[1]).toMatchObject({ baseAc: 13, dexCap: 2, equipped: false })
+    expect(ch.toggles).toEqual([
+      { name: 'Shield', attackBonus: 0, damageBonus: 0, damageDice: null, acBonus: 2, on: true, appliesTo: null, aliases: [] },
+    ])
+    expect(ch.consumables.map((c) => [c.name, c.count])).toEqual([
+      ['Potion of Healing', 2],
+      ['Torch', 5],
+    ])
+    expect(ch.consumables[0].heal).toEqual({ terms: [{ sign: 1, count: 2, sides: 4 }], flat: 2 })
+    expect(deriveCharacter({}).items).toEqual([])
+  })
+
+  it('rejects bad items', () => {
+    expectError('{"inventory":[{"kind":"weapon"}]}', /inventory\[1\]: every item needs a name/)
+    expectError('{"inventory":[{"name":"Axe","kind":"weapon"}]}', /no attack called "Axe"/)
+    expectError('{"inventory":[{"name":"Mail","kind":"armor"}]}', /armor needs a baseAc/)
+    expectError('{"inventory":[{"name":"Thing","kind":"gadget"}]}', /kind must be one of/)
+    expectError('{"inventory":[{"name":"Rope"},{"name":"rope"}]}', /two items called "rope"/)
+    expectError('{"toggles":[{"name":"Shield"}],"inventory":[{"name":"Shield","kind":"shield"}]}', /already a toggle called "Shield"/)
+  })
+})

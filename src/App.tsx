@@ -12,6 +12,7 @@ import {
 import { CharacterError, parseCharacterFile, type Character, type DerivedToggle } from './engine/character'
 import {
   allCandidates,
+  applyBatch,
   extractToggles,
   fmtMod,
   initialRollerState,
@@ -21,6 +22,7 @@ import {
   performRoll,
   runCommand,
   type AttackPart,
+  type BatchOp,
   type Candidate,
   type Resolved,
   type RollerState,
@@ -31,12 +33,14 @@ import type { Mode } from './engine/roll'
 import { SAMPLE_CHARACTER_JSON } from './engine/sample'
 import { loadJSON, loadString, saveJSON, saveString } from './storage'
 import { CharacterDialog } from './ui/CharacterDialog'
+import { InventoryHud } from './ui/InventoryHud'
 import { LiveRegion } from './ui/LiveRegion'
 
 const CHARACTER_KEY = 'clatter.character'
 const SETTINGS_KEY = 'clatter.settings'
 const hpKey = (name: string): string => `clatter.hp.${name}`
 const handKey = (name: string): string => `clatter.hand.${name}`
+const armorKey = (name: string): string => `clatter.armor.${name}`
 const itemsKey = (name: string): string => `clatter.items.${name}`
 const HISTORY_LIMIT = 100
 const QUICK_DICE = [4, 6, 8, 10, 12, 20, 100]
@@ -86,7 +90,18 @@ function initialHand(ch: Character): string | null {
   const stored = loadString(handKey(ch.name))
   if (stored === '') return null
   if (stored && ch.attacks.some((a) => a.name === stored)) return stored
-  return ch.attacks.find((a) => a.equipped)?.name ?? null
+  const attack = ch.attacks.find((a) => a.equipped)
+  if (attack) return attack.name
+  const item = ch.items.find((i) => i.kind === 'weapon' && i.equipped && i.attack)
+  return item?.attack ?? null
+}
+
+/** The armor worn on this device: what was saved, else the file's equipped armor, else none. */
+function initialArmor(ch: Character): string | null {
+  const stored = loadString(armorKey(ch.name))
+  if (stored === '') return null
+  if (stored && ch.items.some((i) => i.kind === 'armor' && i.name === stored)) return stored
+  return ch.items.find((i) => i.kind === 'armor' && i.equipped)?.name ?? null
 }
 
 /** What is left of each consumable on this device, with the file's count for anything new. */
@@ -121,6 +136,8 @@ function describeSuggestion(input: string, candidates: Candidate[], ch: Characte
       return 'Enter sets temporary hit points.'
     case 'query':
       return `Enter answers /${cmd.topic}.`
+    case 'hud':
+      return cmd.screen === 'inventory' ? 'Enter opens the inventory.' : `Enter: ${cmd.screen} is not built yet.`
     case 'wield':
       return cmd.query ? `Enter wields ${cmd.query}.` : 'Enter says what is in hand.'
     case 'unequip':
@@ -202,8 +219,10 @@ export default function App() {
   const [stickyMode, setStickyMode] = useState<Mode>('normal')
   const [activeToggles, setActiveToggles] = useState<string[]>([])
   const [inHand, setInHand] = useState<string | null>(null)
+  const [wearing, setWearing] = useState<string | null>(null)
   const [items, setItems] = useState<Record<string, number>>({})
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [hudOpen, setHudOpen] = useState(false)
   const roller = useRef<RollerState>(initialRollerState())
   const inputRef = useRef<HTMLInputElement>(null)
   const nextId = useRef(1)
@@ -216,10 +235,11 @@ export default function App() {
     roller.current = { ...roller.current, stickyMode, activeToggles }
   }, [stickyMode, activeToggles])
 
-  // A new character: its hit points, weapon in hand, and items for this device, its equipped toggles, and a clean slate.
+  // A new character: its hit points, weapon in hand, armor, and items for this device, its equipped toggles, and a clean slate.
   useEffect(() => {
     const defaults = character.toggles.filter((t) => t.on).map((t) => t.name)
     const hand = initialHand(character)
+    const armor = initialArmor(character)
     const stock = initialItems(character)
     roller.current = {
       ...roller.current,
@@ -227,18 +247,27 @@ export default function App() {
       history: [],
       activeToggles: defaults,
       inHand: hand,
+      wearing: armor,
       items: stock,
       last: null,
       pendingCrit: null,
     }
     setActiveToggles(defaults)
     setInHand(hand)
+    setWearing(armor)
     setItems(stock)
   }, [character])
 
-  // "/" anywhere outside a text field jumps back to the roll box.
+  // "/" anywhere outside a text field jumps back to the roll box. Alt+I opens the
+  // inventory from anywhere, text box included; the button's accesskey says the same
+  // thing to NVDA, and this handler makes it work even where accesskeys differ.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'i') {
+        e.preventDefault()
+        setHudOpen(true)
+        return
+      }
       if (e.key !== '/' || e.ctrlKey || e.altKey || e.metaKey) return
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
@@ -287,9 +316,11 @@ export default function App() {
     roller.current = next.state
     setActiveToggles(next.state.activeToggles)
     setInHand(next.state.inHand)
+    setWearing(next.state.wearing)
     setItems(next.state.items)
     if (next.state.hp) saveJSON(hpKey(character.name), next.state.hp)
     saveString(handKey(character.name), next.state.inHand ?? '')
+    saveString(armorKey(character.name), next.state.wearing ?? '')
     saveJSON(itemsKey(character.name), next.state.items)
     if (next.outcome.result) {
       setHistory((h) => [{ id: nextId.current++, text: next.outcome.text }, ...h].slice(0, HISTORY_LIMIT))
@@ -299,6 +330,12 @@ export default function App() {
 
   function onSubmit(e: FormEvent) {
     e.preventDefault()
+    const cmd = parseCommand(input)
+    if (cmd.kind === 'hud' && cmd.screen === 'inventory') {
+      setInput('')
+      setHudOpen(true)
+      return
+    }
     finish(runCommand(input, character, roller.current, announceOptions))
     setInput('')
   }
@@ -320,6 +357,11 @@ export default function App() {
   function rollQuick(sides: number) {
     const resolved: Resolved = { kind: 'dice', expr: { terms: [{ sign: 1, count: 1, sides }], flat: 0 } }
     finish(performRoll(roller.current, resolved, character, announceOptions))
+  }
+
+  function applyInventory(ops: BatchOp[]) {
+    setHudOpen(false)
+    finish(applyBatch(roller.current, ops, character, announceOptions))
   }
 
   function loadCharacter(text: string): string | null {
@@ -405,6 +447,9 @@ export default function App() {
           </form>
           <p className="muted">{inHand ? `${inHand} in hand.` : 'Nothing in hand.'}</p>
           <div className="grid">
+            <button type="button" accessKey="i" onClick={() => setHudOpen(true)}>
+              Inventory
+            </button>
             <button type="button" aria-pressed={stickyMode === 'advantage'} onClick={() => toggleMode('advantage')}>
               Advantage
             </button>
@@ -563,9 +608,14 @@ export default function App() {
               attack or /a rolls to hit with it and dmg rolls its damage. unequip puts it away.
             </li>
             <li>
-              Gear and items: equip shield and unequip shield switch it and say the new armor class. drink healing or
-              use torch uses an item. /equipped reads what you hold, your shield, your armor, and what you carry;
-              /potions reads what is left.
+              Inventory: type /i, press the Inventory button, or press its shortcut, Alt+I in Chrome and Edge,
+              Alt+Shift+I in Firefox. Inside, H moves between sections, B between items, Enter selects, Done applies
+              everything at once, Escape cancels. One undo reverses the whole batch.
+            </li>
+            <li>
+              Gear and items by typing: equip shield and unequip shield, wear chain shirt and doff armor, drink healing
+              or use torch. /equipped reads what you hold, your armor, your shield, and what you carry; /inventory reads
+              every section; /potions reads what is left.
             </li>
             <li>
               Hit points: minus 5 takes 5 (temporary hit points go first), plus 7 heals 7, temp 8 sets temporary hit
@@ -573,8 +623,8 @@ export default function App() {
               count.
             </li>
             <li>
-              Questions start with a slash: /ac, /passive, /skills, /saves, /attacks, /equipped, /potions, /hp,
-              /status, or a name such as /stealth or /str.
+              Questions start with a slash: /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /potions,
+              /hp, /status, or a name such as /stealth or /str.
             </li>
             <li>Short forms work: perc, soh, init, hist. If it is ambiguous you are told, never guessed.</li>
             <li>Add adv or dis for advantage or disadvantage. Add +2 or +1d4 for a bonus such as Guidance.</li>
@@ -593,6 +643,16 @@ export default function App() {
         initialText={characterText}
         onClose={() => setDialogOpen(false)}
         onLoad={loadCharacter}
+      />
+      <InventoryHud
+        open={hudOpen}
+        character={character}
+        inHand={inHand}
+        wearing={wearing}
+        activeToggles={activeToggles}
+        items={items}
+        onCancel={() => setHudOpen(false)}
+        onApply={applyInventory}
       />
     </>
   )

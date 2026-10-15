@@ -3,7 +3,14 @@
  * sentence to announce. Rolling lives in roll.ts, matching in candidates.ts,
  * hit points in hitpoints.ts, slash answers in readouts.ts.
  */
-import { affectsAttacks, toggleApplies, type Character, type DerivedToggle } from './character'
+import {
+  affectsAttacks,
+  toggleApplies,
+  type Character,
+  type DerivedConsumable,
+  type DerivedItem,
+  type DerivedToggle,
+} from './character'
 import { allCandidates, isSaveTarget, listOr, matchNamed, matchQuery, norm, type Candidate } from './candidates'
 import { type DiceExpr, type Rng, addExpr, parseDiceExpr, rollExpr, secureRng } from './dice'
 import {
@@ -17,7 +24,7 @@ import {
   type HitPoints,
   type HpChange,
 } from './hitpoints'
-import { NO_HP, answerQuery, armorClassTotal, carryingList, describeAttackStats } from './readouts'
+import { NO_HP, answerQuery, armorClassTotal, carryingList, describeAttackStats, describeInventory } from './readouts'
 import {
   type AttackEffect,
   type Mode,
@@ -36,6 +43,8 @@ export type { Candidate, Match, Target } from './candidates'
 /** Which half of an attack: the roll to hit, or the damage. */
 export type AttackPart = 'attack' | 'damage'
 
+export type HudScreen = 'inventory' | 'spells' | 'abilities'
+
 export type Command =
   | { kind: 'empty' }
   | { kind: 'help' }
@@ -49,6 +58,8 @@ export type Command =
   | { kind: 'temp'; value: number | null }
   /** A slash question: /ac, /passive, /stealth. */
   | { kind: 'query'; topic: string }
+  /** /i, /inventory, /s, /spells, /f, /feats: the app opens a HUD screen; the engine speaks a listing. */
+  | { kind: 'hud'; screen: HudScreen }
   /** wield flail, equip shield, don armor. */
   | { kind: 'wield'; query: string }
   /** unequip, sheathe, doff shield. */
@@ -80,10 +91,21 @@ const SAVE_WORDS = new Set(['save', 'saving', 'saves'])
 const DAMAGE_WORDS = new Set(['dmg', 'damage', '/d'])
 const ATTACK_WORDS = new Set(['attack', 'hit', 'swing', '/a'])
 const FLAGS = new Set(['/a', '/d'])
+const HUD_WORDS: Record<string, HudScreen> = {
+  i: 'inventory',
+  inventory: 'inventory',
+  inv: 'inventory',
+  s: 'spells',
+  spells: 'spells',
+  f: 'abilities',
+  feats: 'abilities',
+  abilities: 'abilities',
+  features: 'abilities',
+}
 const CRIT_WORDS = new Set(['crit', 'critical'])
 const AGAIN_WORDS = new Set(['again', 'redo', 'reroll'])
 const LAST_WORDS = new Set(['last', 'repeat', 'result'])
-const WIELD_WORDS = new Set(['wield', 'equip', 'draw', 'hold', 'ready', 'don'])
+const WIELD_WORDS = new Set(['wield', 'equip', 'draw', 'hold', 'ready', 'don', 'wear'])
 const UNWIELD_WORDS = new Set(['unequip', 'unwield', 'sheathe', 'stow', 'doff'])
 const USE_WORDS = new Set(['use', 'drink', 'quaff', 'take'])
 const ARTICLES = new Set(['a', 'an', 'the', 'my', 'some'])
@@ -104,7 +126,9 @@ export function parseCommand(input: string): Command {
   if (tokens.length === 0) return { kind: 'empty' }
   const [first, ...rest] = tokens
   if (first.startsWith('/') && !FLAGS.has(first)) {
-    const topic = [first.slice(1), ...rest].join(' ').trim()
+    const word = first.slice(1)
+    if (tokens.length === 1 && word in HUD_WORDS) return { kind: 'hud', screen: HUD_WORDS[word] }
+    const topic = [word, ...rest].join(' ').trim()
     return topic === '' || topic === 'help' ? { kind: 'help' } : { kind: 'query', topic }
   }
   if (tokens.length === 1 && (first === 'help' || first === '?')) return { kind: 'help' }
@@ -229,10 +253,13 @@ export function executeResolved(r: Resolved, ch: Character, opts: AnnounceOption
   return { text: announce(result, opts), result }
 }
 
-/** Hit points and item counts together, so undo restores both. */
+/** What undo restores. Gear fields are present only for a batch applied from the inventory. */
 export interface Snapshot {
   hp: HitPoints | null
   items: Record<string, number>
+  inHand?: string | null
+  wearing?: string | null
+  activeToggles?: string[]
 }
 
 export interface RollerState {
@@ -249,9 +276,11 @@ export interface RollerState {
   hp: HitPoints | null
   /** Attack name in hand; null when empty-handed. Attacking by name sets it. */
   inHand: string | null
+  /** Armor item worn; null when unarmored. */
+  wearing: string | null
   /** What is left of each consumable, by name. */
   items: Record<string, number>
-  /** Previous hit point and item states, newest first, for undo. */
+  /** Previous states, newest first, for undo. */
   history: Snapshot[]
 }
 
@@ -263,6 +292,7 @@ export const initialRollerState = (): RollerState => ({
   pendingCrit: null,
   hp: null,
   inHand: null,
+  wearing: null,
   items: {},
   history: [],
 })
@@ -271,6 +301,8 @@ const HISTORY_LIMIT = 20
 
 type Step = { state: RollerState; outcome: Outcome }
 
+const message = (state: RollerState, text: string): Step => ({ state, outcome: { text, result: null } })
+
 /** Applies a hit point or item change and keeps the old state for undo. */
 function remember(state: RollerState, next: { hp?: HitPoints | null; items?: Record<string, number> }): RollerState {
   const hp = next.hp === undefined ? state.hp : next.hp
@@ -278,6 +310,12 @@ function remember(state: RollerState, next: { hp?: HitPoints | null; items?: Rec
   if (hp === state.hp && items === state.items) return state
   const history = [{ hp: state.hp, items: state.items }, ...state.history].slice(0, HISTORY_LIMIT)
   return { ...state, hp, items, history }
+}
+
+/** " Armor class 15." or "" when the character has no armor class. */
+function acSuffix(ch: Character, activeToggles: string[], wearing: string | null): string {
+  const total = armorClassTotal(ch, activeToggles, wearing)
+  return total === null ? '' : ` Armor class ${total}.`
 }
 
 /** Pulls toggle words out of a query: "flail rage" becomes query "flail" with toggles ["Rage"]. */
@@ -352,10 +390,11 @@ export const HELP_TEXT =
   'Type what to roll and press Enter. Examples: stealth. dex save. rapier. 2d6+3. ' +
   'Attacks roll to hit; then dmg or slash d rolls the damage. A natural 20 makes that damage critical on its own. ' +
   'Attacking by name puts that weapon in hand; after that, attack or slash a rolls with it. wield flail changes it, unequip puts it away. ' +
-  'equip shield and unequip shield switch gear. drink healing or use torch uses an item. ' +
+  'equip shield and unequip shield switch gear, wear chain shirt and doff armor change armor. drink healing or use torch uses an item. ' +
+  'Slash i opens the inventory, where every item is a button, Enter selects, and Done applies. ' +
   'Add adv or dis for advantage or disadvantage, +2 or +1d4 for bonuses. ' +
   'Hit points: minus 5 takes 5, plus 7 heals 7, temp 8 sets temporary hit points, undo reverses, long rest resets. ' +
-  'Questions start with a slash: /ac, /passive, /skills, /saves, /attacks, /equipped, /potions, /hp, /status, or /stealth for one skill. ' +
+  'Questions start with a slash: /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /potions, /hp, /status, or /stealth for one skill. ' +
   'Enter on the empty box rolls the last thing again; last repeats the result.'
 
 const attackCandidates = (ch: Character): Candidate[] => allCandidates(ch).filter((c) => c.target.kind === 'attack')
@@ -367,75 +406,98 @@ function attackList(ch: Character): string {
 
 function setToggle(state: RollerState, t: DerivedToggle, on: boolean, ch: Character): Step {
   const isOn = state.activeToggles.includes(t.name)
-  if (isOn === on) return { state, outcome: { text: `${t.name} is already ${on ? 'on' : 'off'}.`, result: null } }
+  if (isOn === on) return message(state, `${t.name} is already ${on ? 'on' : 'off'}.`)
   const active = on ? [...state.activeToggles, t.name] : state.activeToggles.filter((n) => n !== t.name)
   let text = `${t.name} ${on ? 'on' : 'off'}.`
-  const ac = t.acBonus !== 0 ? armorClassTotal(ch, active) : null
-  if (ac !== null) text += ` Armor class ${ac}.`
+  if (t.acBonus !== 0) text += acSuffix(ch, active, state.wearing)
   return { state: { ...state, activeToggles: active }, outcome: { text, result: null } }
 }
 
-/** Things that can be equipped: toggles such as a shield, and attacks. */
+function wearArmor(state: RollerState, item: DerivedItem, ch: Character): Step {
+  if (state.wearing === item.name) return message(state, `${item.name} is already on.`)
+  const next = { ...state, wearing: item.name }
+  return { state: next, outcome: { text: `${item.name} on.${acSuffix(ch, next.activeToggles, next.wearing)}`, result: null } }
+}
+
+function removeArmor(state: RollerState, ch: Character): Step {
+  if (!state.wearing) return message(state, 'No armor on.')
+  const was = state.wearing
+  const next = { ...state, wearing: null }
+  return { state: next, outcome: { text: `${was} off.${acSuffix(ch, next.activeToggles, null)}`, result: null } }
+}
+
+/** Things that can be equipped: toggles such as a shield, attacks, and armor. */
 type Gear =
   | { names: string[]; kind: 'toggle'; toggle: DerivedToggle }
   | { names: string[]; kind: 'attack'; candidate: Candidate }
+  | { names: string[]; kind: 'armor'; item: DerivedItem }
 
 function gearPool(ch: Character): Gear[] {
   return [
     ...ch.toggles.map((t) => ({ names: [t.name.toLowerCase(), ...t.aliases], kind: 'toggle' as const, toggle: t })),
     ...attackCandidates(ch).map((c) => ({ names: c.names, kind: 'attack' as const, candidate: c })),
+    ...ch.items
+      .filter((i) => i.kind === 'armor')
+      .map((i) => ({ names: [i.name.toLowerCase(), ...i.aliases], kind: 'armor' as const, item: i })),
   ]
 }
 
-const gearName = (g: Gear): string => (g.kind === 'toggle' ? g.toggle.name : g.candidate.name)
+const gearName = (g: Gear): string =>
+  g.kind === 'toggle' ? g.toggle.name : g.kind === 'attack' ? g.candidate.name : g.item.name
 
 function wield(query: string, ch: Character, state: RollerState): Step {
-  const message = (text: string): Step => ({ state, outcome: { text, result: null } })
-  if (!query) return message(state.inHand ? `${state.inHand} in hand.` : `Wield what? ${attackList(ch)}`)
+  if (!query) return message(state, state.inHand ? `${state.inHand} in hand.` : `Wield what? ${attackList(ch)}`)
   const m = matchNamed(query, gearPool(ch), ch.aliases)
-  if (m.kind === 'ambiguous') return message(`Ambiguous: ${listOr(m.items.map(gearName))}. Type more letters.`)
-  if (m.kind === 'none') return message(`Nothing called ${query} to wield. ${attackList(ch)}`)
+  if (m.kind === 'ambiguous') return message(state, `Ambiguous: ${listOr(m.items.map(gearName))}. Type more letters.`)
+  if (m.kind === 'none') return message(state, `Nothing called ${query} to wield. ${attackList(ch)}`)
   if (m.item.kind === 'toggle') return setToggle(state, m.item.toggle, true, ch)
+  if (m.item.kind === 'armor') return wearArmor(state, m.item.item, ch)
   const c = m.item.candidate
   const attack = c.target.kind === 'attack' ? ch.attacks[c.target.index] : undefined
-  if (!attack) return message('That attack is no longer on this character.')
-  return { state: { ...state, inHand: attack.name }, outcome: { text: `${attack.name} in hand: ${describeAttackStats(attack)}.`, result: null } }
+  if (!attack) return message(state, 'That attack is no longer on this character.')
+  return {
+    state: { ...state, inHand: attack.name },
+    outcome: { text: `${attack.name} in hand: ${describeAttackStats(attack)}.`, result: null },
+  }
 }
 
 function unequip(query: string, ch: Character, state: RollerState): Step {
-  const message = (text: string): Step => ({ state, outcome: { text, result: null } })
   if (!query) {
-    if (!state.inHand) return message('Nothing in hand.')
+    if (!state.inHand) return message(state, 'Nothing in hand.')
     return { state: { ...state, inHand: null }, outcome: { text: `${state.inHand} put away. Nothing in hand.`, result: null } }
   }
+  if (query === 'armor' || query === 'armour') return removeArmor(state, ch)
   const m = matchNamed(query, gearPool(ch), ch.aliases)
-  if (m.kind === 'ambiguous') return message(`Ambiguous: ${listOr(m.items.map(gearName))}. Type more letters.`)
-  if (m.kind === 'none') return message(`Nothing called ${query} to put away.`)
+  if (m.kind === 'ambiguous') return message(state, `Ambiguous: ${listOr(m.items.map(gearName))}. Type more letters.`)
+  if (m.kind === 'none') return message(state, `Nothing called ${query} to put away.`)
   if (m.item.kind === 'toggle') return setToggle(state, m.item.toggle, false, ch)
+  if (m.item.kind === 'armor') {
+    if (state.wearing !== m.item.item.name) return message(state, `${m.item.item.name} is not worn.`)
+    return removeArmor(state, ch)
+  }
   const name = m.item.candidate.name
-  if (state.inHand !== name) return message(`${name} is not in hand.`)
+  if (state.inHand !== name) return message(state, `${name} is not in hand.`)
   return { state: { ...state, inHand: null }, outcome: { text: `${name} put away. Nothing in hand.`, result: null } }
 }
 
 const lowerFirst = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1)
 const article = (name: string): string => (/^[aeiou]/i.test(name) ? 'an' : 'a')
 
-function useItem(query: string, verb: string, ch: Character, state: RollerState, opts: AnnounceOptions, rng: Rng): Step {
-  const message = (text: string): Step => ({ state, outcome: { text, result: null } })
-  if (!ch.consumables.length) return message('No consumables on this character.')
-  const carrying = `You carry ${carryingList(ch, state.items)}.`
-  if (!query) return message(`Use what? ${carrying}`)
-  const pool = ch.consumables.map((c) => ({ names: [c.name.toLowerCase(), ...c.aliases], c }))
-  const m = matchNamed(query, pool)
-  if (m.kind === 'ambiguous') return message(`Ambiguous: ${listOr(m.items.map((x) => x.c.name))}. Type more letters.`)
-  if (m.kind === 'none') return message(`Nothing called ${query} to use. ${carrying}`)
-  const c = m.item.c
+interface Consumed {
+  hp: HitPoints | null
+  items: Record<string, number>
+  activeToggles: string[]
+  text: string
+}
+
+/** Uses one of a consumable: the new hit points, counts, toggles, and the sentence. No history. */
+function consume(state: RollerState, c: DerivedConsumable, verb: string, opts: AnnounceOptions, rng: Rng): Consumed | null {
   const left = state.items[c.name] ?? c.count
-  if (left <= 0) return message(`No ${c.name} left.`)
+  if (left <= 0) return null
   const past = verb === 'drink' || verb === 'quaff' ? 'Drank' : 'Used'
   const items = { ...state.items, [c.name]: left - 1 }
   let hp = state.hp
-  let active = state.activeToggles
+  let activeToggles = state.activeToggles
   let text = `${past} ${article(c.name)} ${c.name}`
   if (c.heal) {
     if (!hp) {
@@ -452,14 +514,114 @@ function useItem(query: string, verb: string, ch: Character, state: RollerState,
       if (opts.breakdown && rolled.terms.length) text += ` You rolled ${describeDice(rolled)}.`
     }
   } else if (c.toggle) {
-    if (!active.includes(c.toggle)) active = [...active, c.toggle]
+    if (!activeToggles.includes(c.toggle)) activeToggles = [...activeToggles, c.toggle]
     text += `. ${c.toggle} on.`
   } else {
     text += '.'
   }
   text += ` ${left - 1} left.`
-  const next = remember(state, { hp, items })
-  return { state: { ...next, activeToggles: active }, outcome: { text, result: null } }
+  return { hp, items, activeToggles, text }
+}
+
+function useItem(query: string, verb: string, ch: Character, state: RollerState, opts: AnnounceOptions, rng: Rng): Step {
+  if (!ch.consumables.length) return message(state, 'No consumables on this character.')
+  const carrying = `You carry ${carryingList(ch, state.items)}.`
+  if (!query) return message(state, `Use what? ${carrying}`)
+  const pool = ch.consumables.map((c) => ({ names: [c.name.toLowerCase(), ...c.aliases], c }))
+  const m = matchNamed(query, pool)
+  if (m.kind === 'ambiguous') return message(state, `Ambiguous: ${listOr(m.items.map((x) => x.c.name))}. Type more letters.`)
+  if (m.kind === 'none') return message(state, `Nothing called ${query} to use. ${carrying}`)
+  const used = consume(state, m.item.c, verb, opts, rng)
+  if (!used) return message(state, `No ${m.item.c.name} left.`)
+  const next = remember(state, { hp: used.hp, items: used.items })
+  return { state: { ...next, activeToggles: used.activeToggles }, outcome: { text: used.text, result: null } }
+}
+
+/** One change chosen in the inventory. */
+export type BatchOp =
+  | { op: 'wield'; name: string | null }
+  | { op: 'wear'; name: string | null }
+  | { op: 'toggle'; name: string; on: boolean }
+  | { op: 'use'; name: string }
+
+/**
+ * Applies the inventory's selections in order, as one change: wield, wear,
+ * toggles, then items. One sentence per change that actually changed
+ * something, and one undo step for the lot.
+ */
+export function applyBatch(state: RollerState, ops: BatchOp[], ch: Character, opts: AnnounceOptions, rng: Rng = secureRng): Step {
+  let s: RollerState = { ...state }
+  const texts: string[] = []
+  for (const op of ops) {
+    switch (op.op) {
+      case 'wield':
+        if (op.name === null) {
+          if (s.inHand) {
+            s = { ...s, inHand: null }
+            texts.push('Nothing in hand.')
+          }
+        } else if (s.inHand !== op.name) {
+          s = { ...s, inHand: op.name }
+          texts.push(`${op.name} in hand.`)
+        }
+        break
+      case 'wear':
+        if (op.name === null) {
+          if (s.wearing) {
+            const r = removeArmor(s, ch)
+            s = r.state
+            texts.push(r.outcome.text)
+          }
+        } else if (s.wearing !== op.name) {
+          const item = ch.items.find((i) => i.kind === 'armor' && i.name === op.name)
+          if (!item) break
+          const r = wearArmor(s, item, ch)
+          s = r.state
+          texts.push(r.outcome.text)
+        }
+        break
+      case 'toggle': {
+        const t = ch.toggles.find((x) => x.name === op.name)
+        if (!t) break
+        const r = setToggle(s, t, op.on, ch)
+        if (r.state !== s) {
+          s = r.state
+          texts.push(r.outcome.text)
+        }
+        break
+      }
+      case 'use': {
+        const c = ch.consumables.find((x) => x.name === op.name)
+        if (!c) break
+        const used = consume(s, c, 'use', opts, rng)
+        if (!used) break
+        s = { ...s, hp: used.hp, items: used.items, activeToggles: used.activeToggles }
+        texts.push(used.text)
+        break
+      }
+    }
+  }
+  if (!texts.length) return message(state, 'No changes.')
+  const snapshot: Snapshot = {
+    hp: state.hp,
+    items: state.items,
+    inHand: state.inHand,
+    wearing: state.wearing,
+    activeToggles: state.activeToggles,
+  }
+  return { state: { ...s, history: [snapshot, ...state.history].slice(0, HISTORY_LIMIT) }, outcome: { text: texts.join(' '), result: null } }
+}
+
+function statusContext(state: RollerState) {
+  return {
+    hp: state.hp,
+    activeToggles: state.activeToggles,
+    stickyMode: state.stickyMode,
+    pendingCrit: state.pendingCrit,
+    inHand: state.inHand,
+    wearing: state.wearing,
+    items: state.items,
+  }
 }
 
 export function runCommand(
@@ -470,60 +632,58 @@ export function runCommand(
   rng: Rng = secureRng,
 ): Step {
   const cmd = parseCommand(input)
-  const message = (text: string): Step => ({ state, outcome: { text, result: null } })
   const applyHp = (change: HpChange): Step => ({
     state: remember(state, { hp: change.hp }),
     outcome: { text: change.text, result: null },
   })
   switch (cmd.kind) {
     case 'empty':
-      if (!state.last) return message('Nothing rolled yet. Type a skill, ability, or attack and press Enter.')
+      if (!state.last) return message(state, 'Nothing rolled yet. Type a skill, ability, or attack and press Enter.')
       return performRoll(state, state.last, ch, opts, rng)
     case 'help':
-      return message(HELP_TEXT)
+      return message(state, HELP_TEXT)
     case 'last':
-      return message(state.lastText ?? 'Nothing rolled yet.')
+      return message(state, state.lastText ?? 'Nothing rolled yet.')
     case 'hp':
-      if (!state.hp) return message(NO_HP)
+      if (!state.hp) return message(state, NO_HP)
       return applyHp(cmd.delta < 0 ? takeDamage(state.hp, -cmd.delta) : heal(state.hp, cmd.delta))
     case 'hp-set':
-      if (!state.hp) return message(NO_HP)
+      if (!state.hp) return message(state, NO_HP)
       return applyHp(setCurrent(state.hp, cmd.value))
     case 'hp-status':
-      return message(state.hp ? describeHp(state.hp) : NO_HP)
+      return message(state, state.hp ? describeHp(state.hp) : NO_HP)
     case 'temp':
-      if (!state.hp) return message(NO_HP)
+      if (!state.hp) return message(state, NO_HP)
       if (cmd.value === null) {
-        return message(state.hp.temp ? `${state.hp.temp} temporary hit points.` : 'No temporary hit points.')
+        return message(state, state.hp.temp ? `${state.hp.temp} temporary hit points.` : 'No temporary hit points.')
       }
       return applyHp(setTemp(state.hp, cmd.value))
     case 'undo': {
       const [previous, ...older] = state.history
-      if (!previous) return message('Nothing to undo.')
+      if (!previous) return message(state, 'Nothing to undo.')
       const parts = ['Undid the last change.']
       if (previous.hp) parts.push(describeHp(previous.hp))
       for (const [name, n] of Object.entries(previous.items)) {
         if (state.items[name] !== n) parts.push(`${name}: ${n} left.`)
       }
-      return {
-        state: { ...state, hp: previous.hp, items: previous.items, history: older },
-        outcome: { text: parts.join(' '), result: null },
+      let next: RollerState = { ...state, hp: previous.hp, items: previous.items, history: older }
+      if (previous.inHand !== undefined && previous.wearing !== undefined && previous.activeToggles !== undefined) {
+        next = { ...next, inHand: previous.inHand, wearing: previous.wearing, activeToggles: previous.activeToggles }
+        parts.push(previous.inHand ? `${previous.inHand} in hand.` : 'Nothing in hand.')
+        const ac = acSuffix(ch, next.activeToggles, next.wearing)
+        if (ac) parts.push(ac.trim())
       }
+      return { state: next, outcome: { text: parts.join(' '), result: null } }
     }
     case 'rest':
-      if (!state.hp) return message(NO_HP)
+      if (!state.hp) return message(state, NO_HP)
       return applyHp(longRest(state.hp))
     case 'query':
-      return message(
-        answerQuery(cmd.topic, ch, {
-          hp: state.hp,
-          activeToggles: state.activeToggles,
-          stickyMode: state.stickyMode,
-          pendingCrit: state.pendingCrit,
-          inHand: state.inHand,
-          items: state.items,
-        }),
-      )
+      return message(state, answerQuery(cmd.topic, ch, statusContext(state)))
+    case 'hud':
+      if (cmd.screen === 'inventory') return message(state, describeInventory(ch, statusContext(state)))
+      if (cmd.screen === 'spells') return message(state, 'Spells are not built yet.')
+      return message(state, 'Feats and abilities are not built yet.')
     case 'wield':
       return wield(cmd.query, ch, state)
     case 'unequip':
@@ -532,7 +692,7 @@ export function runCommand(
       return useItem(cmd.query, cmd.verb, ch, state, opts, rng)
     case 'hand': {
       const candidate = state.inHand ? attackCandidates(ch).find((c) => c.name === state.inHand) : undefined
-      if (!candidate) return message(NOTHING_IN_HAND)
+      if (!candidate) return message(state, NOTHING_IN_HAND)
       // Toggles applied to the last roll of this weapon (flail rage, then dmg) carry over.
       const carried = state.last?.kind === 'target' && state.last.candidate.key === candidate.key ? state.last.toggles : []
       return performRoll(
@@ -552,7 +712,7 @@ export function runCommand(
       )
     }
     case 'again': {
-      if (!state.last) return message('Nothing to repeat yet.')
+      if (!state.last) return message(state, 'Nothing to repeat yet.')
       const r: Resolved =
         state.last.kind === 'target'
           ? {
@@ -579,14 +739,14 @@ export function runCommand(
         }
         return { state: { ...state, activeToggles: active }, outcome: { text: texts.join(' '), result: null } }
       }
-      if (!query) return message('Which saving throw? Try dex save or wis save.')
+      if (!query) return message(state, 'Which saving throw? Try dex save or wis save.')
       const pool = allCandidates(ch).filter((c) => (cmd.save ? isSaveTarget(c) : c.target.kind !== 'save'))
       const m = matchQuery(query, pool, ch.aliases)
       if (m.kind === 'none') {
-        return message(`No ${cmd.save ? 'saving throw' : 'roll'} matches ${query}. Type help for examples.`)
+        return message(state, `No ${cmd.save ? 'saving throw' : 'roll'} matches ${query}. Type help for examples.`)
       }
       if (m.kind === 'ambiguous') {
-        return message(`Ambiguous: ${listOr(m.candidates.map((c) => c.name))}. Type more letters.`)
+        return message(state, `Ambiguous: ${listOr(m.candidates.map((c) => c.name))}. Type more letters.`)
       }
       return performRoll(
         state,

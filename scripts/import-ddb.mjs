@@ -7,9 +7,10 @@
  * The character must be set to Public on D&D Beyond (sheet menu > Sharing).
  * Prints the JSON, or writes it to the given file. Things this script cannot
  * work out are left out rather than guessed; check the numbers against the
- * sheet once, then edit the JSON freely. Not handled yet: spells, unarmed
- * strikes, and items whose bonuses depend on being equipped and attuned in
- * unusual ways.
+ * sheet once, then edit the JSON freely. Quest items cannot be told apart
+ * from other gear, so change their kind by hand. Not handled yet: spells,
+ * unarmed strikes, and items whose bonuses depend on being equipped and
+ * attuned in unusual ways.
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
@@ -75,6 +76,26 @@ function activeModifiers(c) {
   return out
 }
 
+/** D&D Beyond descriptions are HTML; keep the words, capped so a screen reader is not stuck in one. */
+function plainText(html, max = 500) {
+  if (!html || typeof html !== 'string') return undefined
+  const text = html
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/(p|li|div|h\d)>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&rsquo;/g, "'")
+    .replace(/&ldquo;|&rdquo;/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!text) return undefined
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}.` : text
+}
+
 /** Drops undefined values, empty arrays, and empty objects so the JSON stays readable. */
 function prune(value) {
   if (Array.isArray(value)) {
@@ -123,31 +144,53 @@ export function convert(c) {
       sum('bonus', 'hit-points-per-level') * level +
       sum('bonus', 'hit-points')
 
-  // Armor class: the equipped armor (or the unarmored formula) plus Dexterity as the armor allows,
-  // plus flat bonuses. Shields become toggles that start on when equipped.
+  // Armor class while unarmored (the unarmored formula plus Dexterity, or a class's unarmored
+  // defense), with flat bonuses kept separately so they apply with armor too. Armor and shields
+  // live in the inventory and the app works out the rest when they are worn.
   const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1)
   const acParts = []
-  const wornArmor = (c.inventory ?? []).find(
-    (it) => it.equipped && it.definition.filterType === 'Armor' && it.definition.armorTypeId >= 1 && it.definition.armorTypeId <= 3,
-  )
-  if (wornArmor) {
-    const d = wornArmor.definition
-    acParts.push({ name: d.name, value: d.armorClass ?? 10 })
-    if (d.armorTypeId === 1) acParts.push({ name: 'Dexterity', value: dexMod })
-    else if (d.armorTypeId === 2) acParts.push({ name: 'Dexterity', value: Math.min(2, dexMod) })
-  } else {
-    const unarmored = mods.find((m) => m.type === 'set' && m.subType === 'unarmored-armor-class')
-    acParts.push({ name: unarmored ? 'unarmored defense' : 'unarmored', value: unarmored?.value ?? 10 })
-    acParts.push({ name: 'Dexterity', value: dexMod })
-    const extraAbility = unarmored?.statId ? ABILITY[unarmored.statId] : null
-    if (extraAbility && extraAbility !== 'dex') {
-      acParts.push({ name: capitalize(ABILITY_WORD[extraAbility]), value: abilityMod(abilities[extraAbility]) })
-    }
+  const unarmored = mods.find((m) => m.type === 'set' && m.subType === 'unarmored-armor-class')
+  acParts.push({ name: unarmored ? 'unarmored defense' : 'unarmored', value: unarmored?.value ?? 10 })
+  acParts.push({ name: 'Dexterity', value: dexMod })
+  const extraAbility = unarmored?.statId ? ABILITY[unarmored.statId] : null
+  if (extraAbility && extraAbility !== 'dex') {
+    acParts.push({ name: capitalize(ABILITY_WORD[extraAbility]), value: abilityMod(abilities[extraAbility]) })
   }
+  const acBonuses = []
   for (const m of mods) {
     if (m.type !== 'bonus' || m.subType !== 'armor-class' || !m.value) continue
     const item = (c.inventory ?? []).find((it) => it.definition.id === m.componentId)
-    acParts.push({ name: item ? item.definition.name : 'other bonus', value: m.value })
+    acBonuses.push({ name: item ? item.definition.name : 'other bonus', value: m.value })
+  }
+
+  // Everything carried, in the inventory's sections. Potions keep the standard healing dice.
+  const HEALING = {
+    'potion of healing': '2d4+2',
+    'potion of greater healing': '4d4+4',
+    'potion of superior healing': '8d4+8',
+    'potion of supreme healing': '10d4+20',
+  }
+  const inventory = []
+  for (const it of c.inventory ?? []) {
+    const d = it.definition
+    const base = {
+      name: d.name,
+      count: it.quantity > 1 ? it.quantity : undefined,
+      description: plainText(d.description),
+      equipped: it.equipped ? true : undefined,
+    }
+    const key = String(d.name).toLowerCase()
+    if (d.filterType === 'Weapon' && d.damage?.diceString) {
+      inventory.push({ ...base, kind: 'weapon' })
+    } else if (d.filterType === 'Armor' && d.armorTypeId >= 1 && d.armorTypeId <= 3) {
+      inventory.push({ ...base, kind: 'armor', baseAc: d.armorClass ?? 10, dexCap: d.armorTypeId === 1 ? undefined : d.armorTypeId === 2 ? 2 : 0 })
+    } else if (d.armorTypeId === 4) {
+      inventory.push({ ...base, kind: 'shield', acBonus: d.armorClass ?? 2 })
+    } else if (d.filterType === 'Potion') {
+      inventory.push({ ...base, kind: 'potion', heal: HEALING[key], aliases: key.startsWith('potion of ') ? [key.slice('potion of '.length)] : undefined })
+    } else {
+      inventory.push({ ...base, kind: 'utility', consumable: d.isConsumable ? true : undefined })
+    }
   }
 
   const skills = SKILLS.filter((s) => has('proficiency', s))
@@ -194,7 +237,6 @@ export function convert(c) {
       damageType: d.damageType ? String(d.damageType).toLowerCase() : undefined,
       attackBonus: magic || undefined,
       damageBonus: magic || undefined,
-      equipped: it.equipped ? true : undefined,
     }
     attacks.push({ name: d.name, damage: d.damage.diceString, ...base })
     if (isRanged) ranged.add(d.name)
@@ -237,30 +279,6 @@ export function convert(c) {
   if (rogue) {
     toggles.push({ name: 'Sneak Attack', damageDice: `${Math.ceil(rogue.level / 2)}d6`, aliases: ['sneak', 'sa'] })
   }
-  for (const it of c.inventory ?? []) {
-    const d = it.definition
-    if (d.armorTypeId === 4) toggles.push({ name: d.name, acBonus: d.armorClass ?? 2, on: it.equipped || undefined })
-  }
-
-  // Potions become consumables; the standard healing potions get their dice.
-  const HEALING = {
-    'potion of healing': '2d4+2',
-    'potion of greater healing': '4d4+4',
-    'potion of superior healing': '8d4+8',
-    'potion of supreme healing': '10d4+20',
-  }
-  const consumables = []
-  for (const it of c.inventory ?? []) {
-    const d = it.definition
-    if (d.filterType !== 'Potion') continue
-    const key = String(d.name).toLowerCase()
-    consumables.push({
-      name: d.name,
-      count: it.quantity ?? 1,
-      heal: HEALING[key],
-      aliases: key.startsWith('potion of ') ? [key.slice('potion of '.length)] : undefined,
-    })
-  }
 
   return prune({
     name: c.name,
@@ -272,9 +290,9 @@ export function convert(c) {
     attacks,
     custom,
     toggles,
-    consumables,
+    inventory,
     hitPoints: hitPointsMax > 0 ? { max: hitPointsMax } : undefined,
-    armorClass: { parts: acParts },
+    armorClass: { parts: acParts, bonuses: acBonuses.length ? acBonuses : undefined },
     source: {
       dndBeyond: c.readonlyUrl ?? `https://www.dndbeyond.com/characters/${c.id}`,
       race: c.race?.fullName,
