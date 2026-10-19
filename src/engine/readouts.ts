@@ -1,17 +1,23 @@
 /**
  * Answers to slash questions: /ac, /passive, /skills, /saves, /attacks,
- * /equipped, /inventory, /potions, /hp, /status, or the name of a skill,
- * ability, or attack. Nothing here rolls.
+ * /equipped, /inventory, /features, /potions, /hp, /status, or the name of a
+ * skill, ability, attack, feature, or toggle. Nothing here rolls.
  */
 import {
   ABILITY_NAMES,
+  FEATURE_SECTIONS,
+  FEATURE_SECTION_NAMES,
+  normName,
   type ArmorClassPart,
   type Character,
   type DerivedAttack,
+  type DerivedFeature,
   type DerivedSkill,
+  type DerivedToggle,
+  type FeatureSection,
   type Proficiency,
 } from './character'
-import { allCandidates, listOr, matchQuery, type Candidate } from './candidates'
+import { allCandidates, listOr, matchNamed, type Candidate } from './candidates'
 import { formatDiceExpr } from './dice'
 import { describeHp, type HitPoints } from './hitpoints'
 import type { Mode } from './roll'
@@ -28,14 +34,30 @@ export interface StatusContext {
   wearing: string | null
   /** What is left of each consumable, by name. */
   items: Record<string, number>
+  /** Uses left of each limited feature, by name; a missing entry means full. */
+  uses: Record<string, number>
+  /** Hit dice left; null means full. */
+  hitDice: number | null
 }
 
 export const NO_HP = 'No hit points on this character yet. Add hitPoints with a max to the character file.'
 export const NO_AC = 'No armor class on this character yet. Add armorClass parts to the character file.'
+export const NO_HIT_DICE = 'No hit dice on this character yet. Add hitDice with a die and a count to the character file.'
+export const NO_FEATURES = 'No feats or abilities on this character yet. Add features to the character file.'
 export const UNKNOWN_TOPIC =
-  'Try /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /potions, /hp, /status, or the name of a skill, ability, or attack.'
+  'Try /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /features, /potions, /hp, /status, or the name of a skill, ability, attack, or feature.'
 
 export const plusWord = (n: number): string => (n < 0 ? `minus ${-n}` : `plus ${n}`)
+
+/** Uses left of a limited feature: what the device remembers, else the full count. */
+export const usesLeft = (f: DerivedFeature, uses: Record<string, number>): number =>
+  f.uses ? (uses[f.name] ?? f.uses.max) : 0
+
+/** Hit dice left: what the device remembers, else the full count; 0 when the character has none. */
+export const hitDiceLeft = (ch: Character, left: number | null): number => (ch.hitDice ? (left ?? ch.hitDice.count) : 0)
+
+export const usesWord = (n: number): string => `${n} ${n === 1 ? 'use' : 'uses'}`
+export const hitDiceWord = (n: number): string => `${n} hit ${n === 1 ? 'die' : 'dice'}`
 
 const PROFICIENCY_WORD: Record<Proficiency, string> = {
   none: 'not proficient',
@@ -79,6 +101,15 @@ export function answerQuery(topic: string, ch: Character, ctx: StatusContext): s
     case 'consumables':
     case 'items':
       return describeConsumables(ch, ctx.items)
+    case 'features':
+    case 'feats':
+    case 'abilities':
+    case 'f':
+      return describeFeatures(ch, ctx)
+    case 'hit dice':
+    case 'hit die':
+    case 'hd':
+      return describeHitDice(ch, ctx.hitDice)
     case 'hp':
     case 'hit points':
     case 'health':
@@ -88,11 +119,56 @@ export function answerQuery(topic: string, ch: Character, ctx: StatusContext): s
     case 'toggles':
       return describeToggles(ch, ctx.activeToggles)
   }
-  const pool = allCandidates(ch).filter((c) => c.target.kind !== 'save')
-  const m = matchQuery(t, pool, ch.aliases)
-  if (m.kind === 'ambiguous') return `Ambiguous: ${listOr(m.candidates.map((c) => c.name))}. Type more letters.`
+  const m = matchNamed(t, topics(ch), ch.aliases)
+  if (m.kind === 'ambiguous') return `Ambiguous: ${listOr(m.items.map((x) => x.name))}. Type more letters.`
   if (m.kind === 'none') return `Nothing called ${topic}. ${UNKNOWN_TOPIC}`
-  return describeCandidate(m.candidate, ch)
+  return describeTopic(m.item, ch, ctx)
+}
+
+/** One thing a question can be about. A roll, a feature, and a toggle with the same name are one topic. */
+interface Topic {
+  name: string
+  names: string[]
+  candidate: Candidate | null
+  feature: DerivedFeature | null
+  toggle: DerivedToggle | null
+}
+
+function topics(ch: Character): Topic[] {
+  const out: Topic[] = allCandidates(ch)
+    .filter((c) => c.target.kind !== 'save')
+    .map((c) => ({ name: c.name, names: c.names, candidate: c, feature: null, toggle: null }))
+  const find = (name: string) => out.find((t) => normName(t.name) === normName(name))
+  for (const f of ch.features) {
+    const t = find(f.name)
+    if (t) {
+      t.feature = f
+      t.names = [...t.names, ...f.aliases]
+    } else {
+      out.push({ name: f.name, names: [f.name.toLowerCase(), ...f.aliases], candidate: null, feature: f, toggle: null })
+    }
+  }
+  for (const tg of ch.toggles) {
+    const t = find(tg.name)
+    if (t) {
+      t.toggle = tg
+      t.names = [...t.names, ...tg.aliases]
+    } else {
+      out.push({ name: tg.name, names: [tg.name.toLowerCase(), ...tg.aliases], candidate: null, feature: null, toggle: tg })
+    }
+  }
+  return out
+}
+
+function describeTopic(t: Topic, ch: Character, ctx: StatusContext): string {
+  const parts: string[] = []
+  if (t.candidate) parts.push(describeCandidate(t.candidate, ch))
+  if (t.feature) {
+    parts.push(t.candidate ? describeFeatureTail(t.feature, ctx) : describeFeature(t.feature, ch, ctx))
+  } else if (t.toggle) {
+    parts.push(describeToggleState(t.toggle, ctx))
+  }
+  return parts.filter(Boolean).join(' ')
 }
 
 function describeCandidate(c: Candidate, ch: Character): string {
@@ -129,6 +205,48 @@ function describeCandidate(c: Candidate, ch: Character): string {
 }
 
 const describeSkill = (s: DerivedSkill): string => `${s.name} ${plusWord(s.modifier)}, ${PROFICIENCY_WORD[s.proficiency]}.`
+
+/** "advantage to hit, plus 2 damage, plus 3d6 damage, plus 2 armor class": what a toggle does while on. */
+export function describeToggleEffects(t: DerivedToggle): string {
+  const parts: string[] = []
+  if (t.advantage) parts.push('advantage to hit')
+  if (t.attackBonus) parts.push(`${plusWord(t.attackBonus)} to hit`)
+  if (t.damageBonus) parts.push(`${plusWord(t.damageBonus)} damage`)
+  if (t.damageDice) parts.push(`plus ${formatDiceExpr(t.damageDice)} damage`)
+  if (t.acBonus) parts.push(`${plusWord(t.acBonus)} armor class`)
+  return parts.join(', ')
+}
+
+/** "Shield spell off, plus 5 armor class." for a toggle that is not a feature. */
+function describeToggleState(t: DerivedToggle, ctx: StatusContext): string {
+  const effects = describeToggleEffects(t)
+  return `${t.name} ${ctx.activeToggles.includes(t.name) ? 'on' : 'off'}${effects ? `, ${effects}` : ''}.`
+}
+
+/** "Rage on, 2 of 3 uses, plus 2 damage. Enter a rage as a bonus action..." */
+export function describeFeature(f: DerivedFeature, ch: Character, ctx: StatusContext): string {
+  const bits: string[] = []
+  if (f.uses) bits.push(`${usesLeft(f, ctx.uses)} of ${f.uses.max} uses`)
+  if (f.heal) bits.push(`heals ${formatDiceExpr(f.heal)}`)
+  const t = f.toggle ? ch.toggles.find((x) => x.name === f.toggle) : undefined
+  if (t) {
+    const effects = describeToggleEffects(t)
+    if (effects) bits.push(effects)
+  }
+  let head = f.name
+  if (f.toggle) head += ctx.activeToggles.includes(f.toggle) ? ' on' : ' off'
+  if (bits.length) head += `, ${bits.join(', ')}`
+  return f.description ? `${head}. ${f.description}` : `${head}.`
+}
+
+/** The feature half of a topic that is also a roll: "Surprise Attack: 2d6." then this. */
+function describeFeatureTail(f: DerivedFeature, ctx: StatusContext): string {
+  const parts: string[] = []
+  if (f.toggle) parts.push(`${f.name} is ${ctx.activeToggles.includes(f.toggle) ? 'on' : 'off'}.`)
+  if (f.uses) parts.push(`${usesLeft(f, ctx.uses)} of ${f.uses.max} uses.`)
+  if (f.description) parts.push(f.description)
+  return parts.join(' ')
+}
 
 /**
  * The armor class parts in force: the worn armor's base plus Dexterity as it
@@ -255,6 +373,59 @@ export function describeInventory(ch: Character, ctx: StatusContext): string {
     section('Utility', utilityEntries),
     section('Quest items', questEntries),
   ].join(' ')
+}
+
+/** One button of the Feats and abilities screen: a feature (with its toggle, if it has one) or a toggle on its own. */
+export type FeatureEntry = { feature: DerivedFeature; toggle: DerivedToggle | null } | { feature: null; toggle: DerivedToggle }
+
+/** Toggles that are neither a feature nor an inventory item. They are listed under Other so nothing switchable is hidden. */
+export function looseToggles(ch: Character): DerivedToggle[] {
+  return ch.toggles.filter(
+    (t) => !ch.features.some((f) => f.toggle === t.name) && !ch.items.some((i) => normName(i.name) === normName(t.name)),
+  )
+}
+
+/** The entries of each section, as the screen lays them out: features in file order, then loose toggles under Other. */
+export function featureSections(ch: Character): Record<FeatureSection, FeatureEntry[]> {
+  const out: Record<FeatureSection, FeatureEntry[]> = { class: [], species: [], feat: [], other: [] }
+  for (const f of ch.features) {
+    out[f.section].push({ feature: f, toggle: f.toggle ? (ch.toggles.find((t) => t.name === f.toggle) ?? null) : null })
+  }
+  for (const t of looseToggles(ch)) out.other.push({ feature: null, toggle: t })
+  return out
+}
+
+/** "Rage off with 3 of 3 uses", "Reckless Attack on", "Danger Sense". */
+export function featureEntryText(e: FeatureEntry, ctx: StatusContext): string {
+  if (!e.feature) return `${e.toggle.name} ${ctx.activeToggles.includes(e.toggle.name) ? 'on' : 'off'}`
+  let s = e.feature.name
+  if (e.toggle) s += ctx.activeToggles.includes(e.toggle.name) ? ' on' : ' off'
+  if (e.feature.uses) s += ` with ${usesLeft(e.feature, ctx.uses)} of ${e.feature.uses.max} uses`
+  return s
+}
+
+/**
+ * Every feature, section by section, as the screen lays it out:
+ * "Class features: Rage off with 3 of 3 uses, Reckless Attack off, Danger Sense. Species traits: ... Feats: ... Hit dice: 5 of 5."
+ * Other is read only when something is in it.
+ */
+export function describeFeatures(ch: Character, ctx: StatusContext): string {
+  const sections = featureSections(ch)
+  if (!ch.features.length && !sections.other.length && !ch.hitDice) return NO_FEATURES
+  const parts: string[] = []
+  for (const s of FEATURE_SECTIONS) {
+    const list = sections[s]
+    if (s === 'other' && !list.length) continue
+    parts.push(`${FEATURE_SECTION_NAMES[s]}: ${list.length ? list.map((e) => featureEntryText(e, ctx)).join(', ') : 'none'}.`)
+  }
+  if (ch.hitDice) parts.push(`Hit dice: ${hitDiceLeft(ch, ctx.hitDice)} of ${ch.hitDice.count}.`)
+  return parts.join(' ')
+}
+
+/** "Hit dice: 4 of 5, d12." */
+export function describeHitDice(ch: Character, left: number | null): string {
+  if (!ch.hitDice) return NO_HIT_DICE
+  return `Hit dice: ${hitDiceLeft(ch, left)} of ${ch.hitDice.count}, d${ch.hitDice.sides}.`
 }
 
 /** "Potion of Healing, 2 left. Torch, 5 left." */

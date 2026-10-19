@@ -22,11 +22,13 @@ Type what the DM asked for and press Enter. Focus stays in the box; the result i
 - Skills and abilities: `stealth`, `perception`, `dex`, `wisdom`. Short forms: `perc`, `soh`, `hist`, `ath`, `init`.
 - Saving throws: `dex save`, `wis saving throw`, `death save`.
 - Attacks are two rolls, as at the table: `rapier` rolls to hit ("Rapier: 22 to hit. You rolled a 15 plus 7 from modifiers."), then `dmg` (or `/d`, or `rapier /d`) rolls its damage. A natural 20 makes that damage roll critical on its own; `rapier crit dmg` forces it. `/a` means the roll to hit.
-- The inventory HUD: type `/i` or `/inventory`, press the Inventory button, or press its shortcut (Alt+I in Chrome and Edge, Alt+Shift+I in Firefox; it works even while you are typing). A dialog opens with one heading per section, Weapons, Armor and shields, Potions, Utility, Quest items, and one button per item. H moves between sections, B between items. Items you can equip or use are toggle buttons whose pressed state is what will be true after Done: press the shield to put it on, the axe to put it in hand, a potion to drink one. Weapons and armor are exclusive, so choosing the axe deselects the flail and says so. Done applies everything, closes, puts you back where you were, and reads one summary: "Axe in hand. Shield on. Armor class 18. Used a Potion of Healing: healed 7. 33 of 38 hit points. 1 left." Escape or Cancel discards. One `undo` reverses the whole batch. Plain buttons, such as quest items, read their description instead.
+- The inventory HUD: type `/i` or `/inventory`, press the Inventory button, or press its shortcut (Alt+I in Chrome and Edge, Alt+Shift+I in Firefox; it works even while you are typing). A dialog opens with one heading per section, Weapons, Armor and shields, Potions, Utility, Quest items, and one button per item. H moves between sections, B between items. Items you can equip or use are toggle buttons whose pressed state is what will be true after Done: press the shield to put it on, the axe to put it in hand, a potion to drink one. Weapons and armor are exclusive, so choosing the axe deselects the flail and says so. Done applies everything, closes, puts you back where you were, and reads one summary: "Axe in hand. Shield on. Armor class 18. Used a Potion of Healing: healed 7. 33 of 38 hit points. 1 left." Escape or Cancel discards. One `undo` reverses the whole batch. Plain buttons, such as quest items, read their description instead. The bare word `inventory` reads the same sections aloud without opening anything.
+- The feats and abilities HUD: type `/f` or `/feats`, press the Feats and abilities button, or press Alt+A (Alt+Shift+A in Firefox). Same layout: Class features, Species traits, Feats, then Rest. A feature that is a toggle, such as Rage or Reckless Attack, is a toggle button that says its uses and whether it is on: "Rage, 2 of 3 uses, plus 2 damage, on". A feature with limited uses, such as Second Wind or Lucky, is a toggle button that spends one use on Done. Everything else is a plain button that reads its description. The Rest section holds "Hit die, 4 of 5 left, d12", Short rest, and Long rest; pick one and Done takes it first, so you can rest and switch Rage back on in one go. The bare word `feats` reads it aloud.
+- Features by typing: `rage` switches Rage on and spends a use ("Rage on. 2 uses left."); at zero you hear "No uses of Rage left until a long rest." `use second wind` spends a limited feature and heals if it heals. `/rage` reads one feature with its state and description. `short rest` recovers short-rest features and says how many hit dice you have; `hit die` spends one ("Spent a hit die: healed 9. 49 of 60 hit points. You rolled a 5 plus 4 from Constitution. 4 hit dice left."); `long rest` recovers hit points, every use, and half your hit dice. `undo` covers all of it.
 - The weapon in hand: attacking by name puts that weapon in hand, and so does `wield flail` (also `equip`, `draw`, `hold`). After that, bare `attack` or `/a` rolls to hit with it and `dmg` rolls its damage. `unequip` or `sheathe` puts it away. The character file's `"equipped": true` picks the weapon you start with.
 - Gear and items: `equip shield` and `unequip shield` (also `don`, `doff`) switch a toggle such as a shield and say the new armor class. `drink healing`, `use torch`, or `quaff giant` uses a consumable: "Drank a Potion of Healing: healed 7. 50 of 60 hit points. 2 left." `/equipped` reads what you hold, your shield, your armor, and what you carry; `/potions` reads what is left. `undo` covers items too.
 - Hit points: `-5` takes 5 damage (temporary hit points go first), `take 5` and `heal 7` work too, `+7` heals 7, `temp 8` sets temporary hit points, `hp` reads them, `hp 30` sets them, `undo` reverses the last change, `long rest` resets. At 0 hit points, death saves keep their own count and damage counts as a failure. "Took 5. Temporary hit points used up. 43 of 45 hit points."
-- Questions start with a slash and never roll: `/ac` ("Armor class 18: unarmored defense 10, Dexterity plus 2, Constitution plus 4, plus 2 from Shield."), `/passive`, `/skills` (proficient ones only), `/saves`, `/attacks`, `/hp`, `/status`, `/toggles`, or a name: `/stealth` ("Stealth plus 5, proficient."), `/str` ("Strength 18, modifier plus 4. Saving throw plus 7, proficient."), `/flail`.
+- Questions start with a slash and never roll: `/ac` ("Armor class 18: unarmored defense 10, Dexterity plus 2, Constitution plus 4, plus 2 from Shield."), `/passive`, `/skills` (proficient ones only), `/saves`, `/attacks`, `/features`, `/hd`, `/hp`, `/status`, `/toggles`, or a name: `/stealth` ("Stealth plus 5, proficient."), `/str` ("Strength 18, modifier plus 4. Saving throw plus 7, proficient."), `/flail`, `/rage` ("Rage on, 2 of 3 uses, plus 2 damage. Enter a rage as a bonus action...").
 - Advantage or disadvantage: `stealth adv`, `stealth dis`. Or press the Advantage or Disadvantage toggle to apply it to every roll until you turn it off.
 - Bonuses: `history +2`, `stealth +1d4` (Guidance), `wis save +1d4` (Bless), `-1d4` (Bane).
 - Raw dice: `2d6+3`, `d20`, `8d6`.
@@ -73,7 +75,7 @@ npm run import -- https://www.dndbeyond.com/characters/123456789 public/characte
 
 Files under `public/characters/` are published with the site, so a link such as `?character=characters/my-hero.json` loads one on any device. Anyone with the link can read them.
 
-It reads ability scores, proficiencies, expertise, saves, initiative bonuses, weapons (including two-handed versatile damage and magic bonuses), class attacks such as a Beast Barbarian's claws, extra-damage features as custom rolls, and adds a Rage toggle for Barbarians and a Sneak Attack toggle for Rogues. Spells and unarmed strikes are not imported yet. Check the numbers against the sheet once, then load the file in the app.
+It reads ability scores, proficiencies, expertise, saves, initiative bonuses, weapons (including two-handed versatile damage and magic bonuses), class attacks such as a Beast Barbarian's claws, extra-damage features as custom rolls, every class feature, species trait, and feat with its description and limited uses, hit dice, and adds Rage and Reckless Attack toggles for Barbarians and a Sneak Attack toggle for Rogues. Spells and unarmed strikes are not imported yet. Check the numbers against the sheet once, then load the file in the app.
 
 ### Toggles
 
@@ -113,6 +115,26 @@ Current hit points are tracked in the app, per device. Anything that changes arm
 ```
 
 Kinds are `weapon`, `armor`, `shield`, `potion`, `utility` (the default), and `quest`. A weapon names an attack (by default, the attack with the same name). Armor gives its `baseAc` and `dexCap`: leave the cap out for light armor, 2 for medium, 0 for heavy; `armorClass.parts` is then the unarmored formula, and `wear chain shirt`, `doff armor`, or the HUD swap what is worn. A shield (or any item with `acBonus`) becomes a toggle you `equip` and `unequip`. Potions, and utility items marked `consumable` or given `heal` or `toggle`, count down when used; counts are tracked per device. `description` is read after the item's name in the HUD. The importer brings all of this in from D&D Beyond, including descriptions; mark quest items yourself. The older top-level `consumables` list still works.
+
+### Features and hit dice
+
+```json
+"toggles": [
+  { "name": "Rage", "damageBonus": 2, "aliases": ["raging"] },
+  { "name": "Reckless Attack", "advantage": true, "appliesTo": ["Flail", "Warhammer"], "aliases": ["reckless"] }
+],
+"features": [
+  { "name": "Rage", "section": "class", "uses": { "max": 3, "per": "long rest" }, "description": "Enter a rage as a bonus action." },
+  { "name": "Reckless Attack", "section": "class", "description": "Advantage on Strength attack rolls until your next turn." },
+  { "name": "Danger Sense", "section": "class", "description": "Advantage on Dexterity saving throws against effects you can see." },
+  { "name": "Second Wind", "section": "class", "uses": { "max": 1, "per": "short rest" }, "heal": "1d10+5" },
+  { "name": "Surprise Attack", "section": "species", "description": "Extra 2d6 damage on the first hit of a fight." },
+  { "name": "Grappler", "section": "feat", "description": "..." }
+],
+"hitDice": { "die": "d12", "count": 5 }
+```
+
+Sections are `class` (the default), `species` (also `race`), `feat`, and `other`. A feature with the same name as a toggle switches that toggle, and switching it on spends one of the feature's `uses`; name a different toggle with `"toggle"`. A feature with `uses` and no toggle is spent with `use second wind`, healing by its `heal` dice if it has them; `per` is `long rest` (the default) or `short rest`. A toggle with `"advantage": true` gives the roll to hit advantage while it is on, and cancels disadvantage as the rules do. `hitDice` gives the die and how many (the default is the level); `hit die` spends one and adds your Constitution modifier. Uses and hit dice are tracked per device. The importer fills all of it in from D&D Beyond, with the uses D&D Beyond shows on the sheet.
 
 Extra keys when you need them:
 

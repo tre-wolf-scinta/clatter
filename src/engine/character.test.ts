@@ -146,6 +146,7 @@ describe('toggles', () => {
       damageBonus: 2,
       damageDice: null,
       acBonus: 0,
+      advantage: false,
       on: false,
       appliesTo: ['flail'],
       aliases: ['raging'],
@@ -246,7 +247,17 @@ describe('inventory', () => {
     expect(ch.items[0]).toMatchObject({ attack: 'Flail', equipped: true, description: 'A spiked ball on a chain.' })
     expect(ch.items[1]).toMatchObject({ baseAc: 13, dexCap: 2, equipped: false })
     expect(ch.toggles).toEqual([
-      { name: 'Shield', attackBonus: 0, damageBonus: 0, damageDice: null, acBonus: 2, on: true, appliesTo: null, aliases: [] },
+      {
+        name: 'Shield',
+        attackBonus: 0,
+        damageBonus: 0,
+        damageDice: null,
+        acBonus: 2,
+        advantage: false,
+        on: true,
+        appliesTo: null,
+        aliases: [],
+      },
     ])
     expect(ch.consumables.map((c) => [c.name, c.count])).toEqual([
       ['Potion of Healing', 2],
@@ -263,5 +274,61 @@ describe('inventory', () => {
     expectError('{"inventory":[{"name":"Thing","kind":"gadget"}]}', /kind must be one of/)
     expectError('{"inventory":[{"name":"Rope"},{"name":"rope"}]}', /two items called "rope"/)
     expectError('{"toggles":[{"name":"Shield"}],"inventory":[{"name":"Shield","kind":"shield"}]}', /already a toggle called "Shield"/)
+  })
+})
+
+describe('features and hit dice', () => {
+  const expectError = (text: string, pattern: RegExp) => expect(() => parseCharacterFile(text)).toThrowError(pattern)
+
+  it('derives features, links them to toggles by name, and reads hit dice', () => {
+    const ch = deriveCharacter({
+      level: 5,
+      toggles: [{ name: 'Rage', damageBonus: 2 }, { name: 'Frenzy' }],
+      features: [
+        { name: 'Rage', uses: { max: 3 }, description: ' Enter a rage. ' },
+        { name: 'Frenzied Rage', toggle: 'frenzy', section: 'Class Features' },
+        { name: 'Second Wind', uses: { max: 1, per: 'short' }, heal: '1d10+5' },
+        { name: 'Darkvision', section: 'racial trait' },
+        { name: 'Lucky', section: 'feats', uses: { max: 3, per: 'Long Rest' }, aliases: ['Luck'] },
+        { name: 'Criminal Contact', section: 'background' },
+      ],
+      hitDice: { die: 'd12' },
+    })
+    expect(ch.features.map((f) => [f.name, f.section, f.toggle])).toEqual([
+      ['Rage', 'class', 'Rage'],
+      ['Frenzied Rage', 'class', 'Frenzy'],
+      ['Second Wind', 'class', null],
+      ['Darkvision', 'species', null],
+      ['Lucky', 'feat', null],
+      ['Criminal Contact', 'other', null],
+    ])
+    expect(ch.features[0]).toMatchObject({ uses: { max: 3, per: 'long rest' }, description: 'Enter a rage.', heal: null })
+    expect(ch.features[2]).toMatchObject({
+      uses: { max: 1, per: 'short rest' },
+      heal: { terms: [{ sign: 1, count: 1, sides: 10 }], flat: 5 },
+    })
+    expect(ch.features[4]).toMatchObject({ uses: { max: 3, per: 'long rest' }, aliases: ['luck'] })
+    expect(ch.hitDice).toEqual({ sides: 12, count: 5 })
+    expect(deriveCharacter({ hitDice: { die: 8, count: 3 } }).hitDice).toEqual({ sides: 8, count: 3 })
+    expect(deriveCharacter({}).features).toEqual([])
+    expect(deriveCharacter({}).hitDice).toBeNull()
+    expect(deriveCharacter({ toggles: [{ name: 'Reckless Attack', advantage: true }] }).toggles[0].advantage).toBe(true)
+  })
+
+  it('rejects bad features and hit dice', () => {
+    expectError('{"features":[{"section":"class"}]}', /features\[1\]: every feature needs a name/)
+    expectError('{"features":[{"name":"Rage","section":"spells"}]}', /Rage.*section must be one of class, species, feat, other/)
+    expectError('{"features":[{"name":"Rage","uses":{"max":0}}]}', /Rage.*uses.max must be a whole number of 1 or more/)
+    expectError('{"features":[{"name":"Rage","uses":{"max":3,"per":"weekly"}}]}', /Rage.*uses.per must be "long rest" or "short rest"/)
+    expectError('{"features":[{"name":"Rage","toggle":"Haste"}]}', /toggle "Haste" is not one of this character's toggles/)
+    expectError('{"features":[{"name":"Second Wind","heal":"lots"}]}', /Second Wind.*heal must be dice like 1d10\+5/)
+    expectError('{"toggles":[{"name":"Rage"}],"features":[{"name":"Rage","heal":"1d10"}]}', /cannot both heal and switch a toggle/)
+    expectError('{"features":[{"name":"Rage"},{"name":"rage"}]}', /two features called "rage"/)
+    expectError(
+      '{"toggles":[{"name":"Rage"}],"features":[{"name":"Rage"},{"name":"Frenzy","toggle":"Rage"}]}',
+      /toggle "Rage" already belongs to Rage/,
+    )
+    expectError('{"hitDice":{"die":"lots"}}', /hitDice.die: expected a die like d12/)
+    expectError('{"hitDice":{"die":"d12","count":0}}', /hitDice.count: expected a whole number of 1 or more/)
   })
 })

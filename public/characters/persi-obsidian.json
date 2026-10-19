@@ -94,6 +94,21 @@
       "aliases": [
         "raging"
       ]
+    },
+    {
+      "name": "Reckless Attack",
+      "advantage": true,
+      "appliesTo": [
+        "Flail",
+        "Warhammer",
+        "Warhammer (two-handed)",
+        "Bite",
+        "Claws",
+        "Tail"
+      ],
+      "aliases": [
+        "reckless"
+      ]
     }
   ],
   "inventory": [
@@ -108,8 +123,118 @@
       "kind": "weapon"
     }
   ],
+  "features": [
+    {
+      "name": "Rage",
+      "section": "class",
+      "description": "You can imbue yourself with a primal power called Rage, a force that grants you extraordinary might and resilience. You can enter it as a Bonus Action if you aren’t wearing Heavy armor. You can enter your Rage the number of times shown for your Barbarian level in the Rages column of the Barbarian Features table. You regain one expended use when you finish a Short Rest, and you regain all expended uses when you finish a Long Rest. While active, your Rage follows the rules below. Damage Resistance. You have Resistance to Bludgeoning, Piercing, and Slashing damage. Rage Damage.",
+      "uses": {
+        "max": 3,
+        "per": "long rest"
+      }
+    },
+    {
+      "name": "Unarmored Defense",
+      "section": "class",
+      "description": "While you aren’t wearing any armor, your base Armor Class equals 10 plus your Dexterity and Constitution modifiers. You can use a Shield and still gain this benefit."
+    },
+    {
+      "name": "Weapon Mastery",
+      "section": "class",
+      "description": "Your training with weapons allows you to use the mastery properties of two kinds of Simple or Martial Melee weapons of your choice. Whenever you finish a Long Rest, you can practice weapon drills and change one of those weapon choices. When you reach certain Barbarian levels, you gain the ability to use the mastery properties of more kinds of weapons, as shown in the Weapon Mastery column of the Barbarian Features table."
+    },
+    {
+      "name": "Danger Sense",
+      "section": "class",
+      "description": "You gain an uncanny sense of when things aren’t as they should be, giving you an edge when you dodge perils. You have Advantage on Dexterity saving throws unless you have the Incapacitated condition."
+    },
+    {
+      "name": "Reckless Attack",
+      "section": "class",
+      "description": "You can throw aside all concern for defense to attack with increased ferocity. When you make your first attack roll on your turn, you can decide to attack recklessly. Doing so gives you Advantage on attack rolls using Strength until the start of your next turn, but attack rolls against you have Advantage during that time."
+    },
+    {
+      "name": "Form of the Beast",
+      "section": "class",
+      "description": "3rd-level Path of the Beast feature When you enter your rage, you can transform, revealing the bestial power within you. Until the rage ends, you manifest a natural weapon. It counts as a simple melee weapon for you, and you add your Strength modifier to the attack and damage rolls when you attack with it, as normal. You choose the weapon’s form each time you rage: Bite. Your mouth transforms into a bestial muzzle or great mandibles (your choice). It deals 1d8 piercing damage on a hit. Once on each of your turns when you damage a creature with this bite, you regain a number of hit points equal to your proficiency bonus, provided you have less than half your hit points when you hit. Claws."
+    },
+    {
+      "name": "Primal Knowledge",
+      "section": "class",
+      "description": "You gain proficiency in another skill of your choice from the skill list available to Barbarians at level 1. In addition, while your Rage is active, you can channel primal power when you attempt certain tasks; whenever you make an ability check using one of the following skills, you can make it as a Strength check even if it normally uses a different ability: Acrobatics, Intimidation, Perception, Stealth, or Survival. When you use this ability, your Strength represents primal power coursing through you, honing your agility, bearing, and senses."
+    },
+    {
+      "name": "Extra Attack",
+      "section": "class",
+      "description": "You can attack twice instead of once whenever you take the Attack action on your turn."
+    },
+    {
+      "name": "Fast Movement",
+      "section": "class",
+      "description": "Your speed increases by 10 feet while you aren’t wearing Heavy armor."
+    },
+    {
+      "name": "Darkvision",
+      "section": "species",
+      "description": "You can see in dim light within 60 feet of you as if it were bright light and in darkness as if it were dim light. You discern colors in that darkness only as shades of gray."
+    },
+    {
+      "name": "Fey Ancestry",
+      "section": "species",
+      "description": "You have advantage on saving throws you make to avoid or end the charmed condition on yourself."
+    },
+    {
+      "name": "Long-Limbed",
+      "section": "species",
+      "description": "When you make a melee attack on your turn, your reach for it is 5 feet greater than normal."
+    },
+    {
+      "name": "Powerful Build",
+      "section": "species",
+      "description": "You count as one size larger when determining your carrying capacity and the weight you can push, drag, or lift."
+    },
+    {
+      "name": "Sneaky",
+      "section": "species",
+      "description": "You are proficient in the Stealth skill. In addition, without squeezing, you can move through and stop in a space large enough for a Small creature."
+    },
+    {
+      "name": "Surprise Attack",
+      "section": "species",
+      "description": "If you hit a creature with an attack roll, the creature takes an extra 2d6 damage if it hasn’t taken a turn yet in the current combat."
+    },
+    {
+      "name": "Grappler",
+      "section": "feat",
+      "description": "General Feat (Prerequisite: Level 4+, Strength or Dexterity 13+) You gain the following benefits. Ability Score Increase. Increase your Strength or Dexterity score by 1, to a maximum of 20. Punch and Grab. When you hit a creature with an Unarmed Strike as part of the Attack action on your turn, you can use both the Damage and the Grapple option. You can use this benefit only once per turn. Attack Advantage. You have Advantage on attack rolls against a creature Grappled by you. Fast Wrestler. You don't have to spend extra movement to move a creature Grappled by you if the creature is your size or smaller."
+    },
+    {
+      "name": "Dark Bargain",
+      "section": "feat",
+      "description": "At your GM's discretion, you can take a Dark Bargain."
+    },
+    {
+      "name": "Character Threads",
+      "section": "feat",
+      "description": "Threads are aspects added to characters at any time during their career that have a specific short or long-term goal."
+    },
+    {
+      "name": "Runestones",
+      "section": "feat",
+      "description": "At the beginning of the Northlands Sagas adventure path, each player should draw one Runestone randomly."
+    },
+    {
+      "name": "Discovery",
+      "section": "other",
+      "description": "The quiet seclusion of your extended hermitage gave you access to a unique and powerful discovery. The exact nature of this revelation depends on the nature of your seclusion. It might be a great truth about the cosmos, the deities, the powerful beings of the outer planes, or the forces of nature. It could be a site that no one else has ever seen. You might have uncovered a fact that has long been forgotten, or unearthed some relic of the past that could rewrite history. It might be information that would be damaging to the people who consigned you to exile, and hence the reason for your return to society."
+    }
+  ],
   "hitPoints": {
     "max": 60
+  },
+  "hitDice": {
+    "die": "d12",
+    "count": 5
   },
   "armorClass": {
     "parts": [
@@ -133,6 +258,6 @@
     "classes": [
       "Barbarian 5 (Path of the Beast (TCoE))"
     ],
-    "importedAt": "2026-10-15"
+    "importedAt": "2026-10-19"
   }
 }

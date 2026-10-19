@@ -64,13 +64,27 @@ describe('parseCommand', () => {
     expect(parseCommand('doff armor')).toEqual({ kind: 'unequip', query: 'armor' })
   })
 
-  it('HUD screens', () => {
-    expect(parseCommand('/i')).toEqual({ kind: 'hud', screen: 'inventory' })
-    expect(parseCommand('/inventory')).toEqual({ kind: 'hud', screen: 'inventory' })
-    expect(parseCommand('/s')).toEqual({ kind: 'hud', screen: 'spells' })
-    expect(parseCommand('/f')).toEqual({ kind: 'hud', screen: 'abilities' })
-    expect(parseCommand('/feats')).toEqual({ kind: 'hud', screen: 'abilities' })
+  it('HUD screens: a slash opens one, the bare word reads it', () => {
+    expect(parseCommand('/i')).toEqual({ kind: 'hud', screen: 'inventory', open: true })
+    expect(parseCommand('/inventory')).toEqual({ kind: 'hud', screen: 'inventory', open: true })
+    expect(parseCommand('/s')).toEqual({ kind: 'hud', screen: 'spells', open: true })
+    expect(parseCommand('/f')).toEqual({ kind: 'hud', screen: 'abilities', open: true })
+    expect(parseCommand('/feats')).toEqual({ kind: 'hud', screen: 'abilities', open: true })
+    expect(parseCommand('inventory')).toEqual({ kind: 'hud', screen: 'inventory', open: false })
+    expect(parseCommand('feats')).toEqual({ kind: 'hud', screen: 'abilities', open: false })
     expect(parseCommand('/int')).toEqual({ kind: 'query', topic: 'int' })
+    expect(parseCommand('/constructor')).toEqual({ kind: 'query', topic: 'constructor' })
+  })
+
+  it('rests and hit dice', () => {
+    expect(parseCommand('long rest')).toEqual({ kind: 'rest', rest: 'long rest' })
+    expect(parseCommand('rest')).toEqual({ kind: 'rest', rest: 'long rest' })
+    expect(parseCommand('short rest')).toEqual({ kind: 'rest', rest: 'short rest' })
+    expect(parseCommand('hit die')).toEqual({ kind: 'hit-die' })
+    expect(parseCommand('hd')).toEqual({ kind: 'hit-die' })
+    expect(parseCommand('spend a hit die')).toEqual({ kind: 'hit-die' })
+    expect(parseCommand('hit dice')).toEqual({ kind: 'hit-die' })
+    expect(parseCommand('hit')).toMatchObject({ kind: 'hand', part: 'attack' })
   })
 
   it('hit point commands', () => {
@@ -85,8 +99,6 @@ describe('parseCommand', () => {
     expect(parseCommand('hp')).toEqual({ kind: 'hp-status' })
     expect(parseCommand('hp 30')).toEqual({ kind: 'hp-set', value: 30 })
     expect(parseCommand('undo')).toEqual({ kind: 'undo' })
-    expect(parseCommand('long rest')).toEqual({ kind: 'rest' })
-    expect(parseCommand('rest')).toEqual({ kind: 'rest' })
   })
 
   it('slash questions', () => {
@@ -446,7 +458,7 @@ describe('consumables', () => {
     expect(run('/potions', start()).outcome.text).toBe('Potion of Healing, 2 left. Potion of Giant Strength, 1 left. Torch, 3 left.')
     expect(say('use torch', [0.5]).outcome.text).toBe('Used a Torch. 4 left.')
     expect(say('use xyz', [0.5]).outcome.text).toBe(
-      'Nothing called xyz to use. You carry Potion of Healing with 2 left and Torch with 5 left.',
+      'Nothing called xyz to use. You carry Potion of Healing with 2 left and Torch with 5 left. You can also use Steady Aim and Lucky.',
     )
   })
 
@@ -556,7 +568,7 @@ describe('armor, the inventory readout, and batches', () => {
     expect(done.state.history).toHaveLength(1)
     const undone = run('undo', done.state)
     expect(undone.outcome.text).toBe(
-      'Undid the last change. 30 of 44 hit points. Potion of Healing: 1 left. Longsword in hand. Armor class 17.',
+      'Undid the last change. 30 of 44 hit points. Potion of Healing: 1 left. Longsword in hand. Shield on. Armor class 17.',
     )
     expect(undone.state).toMatchObject({ inHand: 'Longsword', wearing: 'Chain shirt', activeToggles: ['Shield'], history: [] })
     expect(applyBatch(ready(), [], knight, opts).outcome.text).toBe('No changes.')
@@ -643,10 +655,13 @@ describe('hit points through the command box', () => {
   })
 
   it('without hit points on the character, every hit point command says so', () => {
-    for (const cmd of ['-5', '+5', 'temp 3', 'hp', 'hp 3', 'long rest']) {
+    for (const cmd of ['-5', '+5', 'temp 3', 'hp', 'hp 3', 'hit die']) {
       expect(run(cmd, initialRollerState()).outcome.text).toBe(NO_HP)
     }
     expect(run('undo', initialRollerState()).outcome.text).toBe('Nothing to undo.')
+    // The sample has features and hit dice, so a rest still means something without hit points; a bare character has nothing to rest.
+    expect(run('long rest', initialRollerState()).outcome.text).toBe('Long rest. Nothing to recover.')
+    expect(runCommand('long rest', deriveCharacter({}), initialRollerState(), opts).outcome.text).toBe(NO_HP)
   })
 
   it('death saves keep a tally once the character is down', () => {
@@ -751,5 +766,141 @@ describe('toggles', () => {
     expect(rogue.toggles.map((t) => t.name)).toEqual(['Sneak Attack', 'Sharpshooter'])
     expect(extractToggles('rapier sneak attack adv', rogue)).toEqual({ query: 'rapier adv', toggles: ['Sneak Attack'] })
     expect(extractToggles('stealth', rogue)).toEqual({ query: 'stealth', toggles: [] })
+  })
+})
+
+describe('features, uses, and rests', () => {
+  const barbarian = deriveCharacter({
+    level: 5,
+    abilities: { str: 18, con: 18 },
+    attacks: [
+      { name: 'Flail', damage: '1d8', damageType: 'bludgeoning' },
+      { name: 'Javelin', damage: '1d6', damageType: 'piercing' },
+    ],
+    toggles: [
+      { name: 'Rage', damageBonus: 2, aliases: ['raging'] },
+      { name: 'Reckless Attack', advantage: true, appliesTo: ['Flail'], aliases: ['reckless'] },
+    ],
+    features: [
+      { name: 'Rage', uses: { max: 3 }, description: 'Enter a rage as a bonus action.' },
+      { name: 'Reckless Attack', description: 'Advantage on Strength attacks until your next turn.' },
+      { name: 'Danger Sense' },
+    ],
+    hitPoints: { max: 60 },
+    hitDice: { die: 'd12' },
+  })
+  const fighter = deriveCharacter({
+    level: 5,
+    abilities: { str: 16, con: 14 },
+    features: [
+      { name: 'Second Wind', uses: { max: 1, per: 'short rest' }, heal: '1d10+5' },
+      { name: 'Action Surge', uses: { max: 1, per: 'short rest' } },
+    ],
+    hitPoints: { max: 44 },
+    hitDice: { die: 'd10' },
+  })
+  const fresh = (): RollerState => ({ ...initialRollerState(), hp: freshHitPoints(60) })
+  const run = (input: string, who = barbarian, state: RollerState = fresh(), dice: number[] = [0.5]) =>
+    runCommand(input, who, state, opts, queueRng(dice))
+
+  it('switching Rage on spends a use, refuses at zero, and undo gives the use back', () => {
+    const on = run('rage')
+    expect(on.outcome.text).toBe('Rage on. 2 uses left.')
+    expect(on.state).toMatchObject({ activeToggles: ['Rage'], uses: { Rage: 2 } })
+    expect(on.state.history).toHaveLength(1)
+    const off = run('rage', barbarian, on.state)
+    expect(off.outcome.text).toBe('Rage off.')
+    expect(off.state.uses).toEqual({ Rage: 2 })
+    expect(off.state.history).toHaveLength(1)
+    const two = run('equip rage', barbarian, off.state)
+    expect(two.outcome.text).toBe('Rage on. 1 use left.')
+    const three = run('rage', barbarian, run('rage', barbarian, two.state).state)
+    expect(three.outcome.text).toBe('Rage on. 0 uses left.')
+    const spent = run('rage', barbarian, three.state).state
+    expect(run('rage', barbarian, spent).outcome.text).toBe('No uses of Rage left until a long rest.')
+    expect(run('rage', barbarian, spent).state).toBe(spent)
+    expect(run('use rage', barbarian, spent).outcome.text).toBe('No uses of Rage left until a long rest.')
+    // The one-roll word never spends anything: it only names what is in force for that roll.
+    expect(run('flail rage dmg', barbarian, spent, [0.25]).outcome.text).toBe(
+      'Flail with Rage: 9 bludgeoning damage. You rolled a 3 plus 4 from modifiers, plus 2 from Rage.',
+    )
+    const undone = run('undo', barbarian, on.state)
+    expect(undone.outcome.text).toBe('Undid the last change. 60 of 60 hit points. Rage: 3 of 3 uses. Rage off.')
+    expect(undone.state).toMatchObject({ activeToggles: [], uses: {}, history: [] })
+  })
+
+  it('an advantage toggle gives the roll to hit advantage, cancels disadvantage, and stays out of damage', () => {
+    expect(run('flail reckless', barbarian, fresh(), [0.7, 0.25]).outcome.text).toBe(
+      'Flail with advantage and Reckless Attack: 22 to hit. You rolled a 15 and a 6, kept the 15, plus 7 from modifiers.',
+    )
+    expect(run('flail reckless dis', barbarian, fresh(), [0.7]).outcome.text).toBe(
+      'Flail with Reckless Attack: 22 to hit. You rolled a 15 plus 7 from modifiers.',
+    )
+    const on = run('reckless')
+    expect(on.outcome.text).toBe('Reckless Attack on.')
+    const hit = run('flail', barbarian, on.state, [0.7, 0.25])
+    expect(hit.outcome.text).toBe(
+      'Flail with advantage and Reckless Attack: 22 to hit. You rolled a 15 and a 6, kept the 15, plus 7 from modifiers.',
+    )
+    expect(run('dmg', barbarian, hit.state, [0.25]).outcome.text).toBe('Flail: 7 bludgeoning damage. You rolled a 3 plus 4 from modifiers.')
+    expect(run('javelin', barbarian, on.state, [0.7]).outcome.text).toBe('Javelin: 22 to hit. You rolled a 15 plus 7 from modifiers.')
+    expect(say('rapier steady', [0.7, 0.25]).outcome.text).toBe(
+      'Rapier with advantage and Steady Aim: 22 to hit. You rolled a 15 and a 6, kept the 15, plus 7 from modifiers.',
+    )
+  })
+
+  it('use spends a limited feature, a short rest brings it back, and hit dice heal', () => {
+    const hurt: RollerState = { ...initialRollerState(), hp: { ...freshHitPoints(44), current: 20 } }
+    const wind = run('use second wind', fighter, hurt, [0.35])
+    expect(wind.outcome.text).toBe('Used Second Wind: healed 9. 29 of 44 hit points. You rolled a 4 plus 5. 0 uses left.')
+    expect(wind.state.uses).toEqual({ 'Second Wind': 0 })
+    expect(run('use second wind', fighter, wind.state).outcome.text).toBe('No uses of Second Wind left until a short rest.')
+    expect(run('use action surge', fighter, wind.state).outcome.text).toBe('Used Action Surge. 0 uses left.')
+    expect(run('use danger sense').outcome.text).toBe('Danger Sense has no uses to spend.')
+    expect(run('use', fighter, hurt).outcome.text).toBe('Use what? You can use Second Wind and Action Surge.')
+    expect(say('use lucky', [0.5]).outcome.text).toBe('Used Lucky. 2 uses left.')
+    const rested = run('short rest', fighter, wind.state)
+    expect(rested.outcome.text).toBe('Short rest. Second Wind recovered. 5 hit dice left. Type hit die to spend one.')
+    expect(rested.state.uses).toEqual({})
+    const die = run('hit die', fighter, rested.state, [0.5])
+    expect(die.outcome.text).toBe(
+      'Spent a hit die: healed 8. 37 of 44 hit points. You rolled a 6 plus 2 from Constitution. 4 hit dice left.',
+    )
+    expect(die.state.hitDice).toBe(4)
+    expect(run('undo', fighter, die.state).outcome.text).toBe('Undid the last change. 29 of 44 hit points. Hit dice: 5 of 5.')
+    let s = die.state
+    for (let i = 0; i < 4; i++) s = run('hd', fighter, s, [0.5]).state
+    expect(s.hitDice).toBe(0)
+    expect(run('hit die', fighter, s).outcome.text).toBe('No hit dice left until a long rest.')
+    expect(run('short rest', fighter, s).outcome.text).toBe('Short rest. No hit dice left.')
+    expect(run('long rest', fighter, { ...s, hp: { ...freshHitPoints(44), current: 10 } }).outcome.text).toBe(
+      'Long rest. 44 of 44 hit points. Hit dice: 2 of 5.',
+    )
+    const raged = run('rage').state
+    expect(run('long rest', barbarian, raged).outcome.text).toBe('Long rest. 60 of 60 hit points. Rage recovered.')
+    expect(run('/f', barbarian, raged).outcome.text).toBe(
+      'Class features: Rage on with 2 of 3 uses, Reckless Attack off, Danger Sense. Species traits: none. Feats: none. Hit dice: 5 of 5.',
+    )
+    expect(run('feats', barbarian, raged).outcome.text).toBe(run('/f', barbarian, raged).outcome.text)
+    expect(run('/rage', barbarian, raged).outcome.text).toBe('Rage on, 2 of 3 uses, plus 2 damage. Enter a rage as a bonus action.')
+    expect(run('/hd', barbarian, raged).outcome.text).toBe('Hit dice: 5 of 5, d12.')
+  })
+
+  it('a batch can rest, spend a hit die, and switch Rage, and says why a spent one is refused', () => {
+    const start: RollerState = { ...initialRollerState(), hp: { ...freshHitPoints(60), current: 30 }, uses: { Rage: 0 }, hitDice: 1 }
+    const ops: BatchOp[] = [{ op: 'rest', rest: 'short rest' }, { op: 'hit-die' }, { op: 'toggle', name: 'Rage', on: true }]
+    const done = applyBatch(start, ops, barbarian, opts, queueRng([0.5]))
+    expect(done.outcome.text).toBe(
+      'Short rest. 1 hit die left. Type hit die to spend one. Spent a hit die: healed 11. 41 of 60 hit points. You rolled a 7 plus 4 from Constitution. No hit dice left. No uses of Rage left until a long rest.',
+    )
+    expect(done.state).toMatchObject({ activeToggles: [], uses: { Rage: 0 }, hitDice: 0 })
+    expect(done.state.history).toHaveLength(1)
+    const rested = applyBatch(done.state, [{ op: 'rest', rest: 'long rest' }, { op: 'toggle', name: 'Rage', on: true }], barbarian, opts)
+    expect(rested.outcome.text).toBe('Long rest. 60 of 60 hit points. Rage recovered. Hit dice: 2 of 5. Rage on. 2 uses left.')
+    expect(rested.state).toMatchObject({ activeToggles: ['Rage'], uses: { Rage: 2 }, hitDice: 2 })
+    const undone = run('undo', barbarian, rested.state)
+    expect(undone.outcome.text).toBe('Undid the last change. 41 of 60 hit points. Rage: 0 of 3 uses. Hit dice: 0 of 5. Rage off.')
+    expect(undone.state).toMatchObject({ activeToggles: [], uses: { Rage: 0 }, hitDice: 0 })
+    expect(applyBatch(fresh(), [{ op: 'use', name: 'Danger Sense' }], barbarian, opts).outcome.text).toBe('No changes.')
   })
 })

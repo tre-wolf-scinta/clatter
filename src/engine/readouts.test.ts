@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { deriveCharacter, parseCharacterFile } from './character'
 import { freshHitPoints } from './hitpoints'
-import { NO_AC, NO_HP, answerQuery, type StatusContext } from './readouts'
+import { NO_AC, NO_FEATURES, NO_HIT_DICE, NO_HP, answerQuery, type StatusContext } from './readouts'
 import { SAMPLE_CHARACTER_JSON } from './sample'
 
 const persi = deriveCharacter({
@@ -39,6 +39,8 @@ const ctx = (over: Partial<StatusContext> = {}): StatusContext => ({
   inHand: null,
   wearing: null,
   items: {},
+  uses: {},
+  hitDice: null,
   ...over,
 })
 
@@ -96,7 +98,7 @@ describe('stats', () => {
   it('ambiguity and unknown topics are said plainly', () => {
     expect(ask('per')).toBe('Ambiguous: Perception, Performance, or Persuasion. Type more letters.')
     expect(ask('xyz')).toBe(
-      'Nothing called xyz. Try /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /potions, /hp, /status, or the name of a skill, ability, or attack.',
+      'Nothing called xyz. Try /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /features, /potions, /hp, /status, or the name of a skill, ability, attack, or feature.',
     )
   })
 
@@ -147,5 +149,54 @@ describe('stats', () => {
     expect(answerQuery('equipped', packed, ctx({ items, activeToggles: [] }))).toBe(
       'Nothing in hand. Carrying Potion of Healing with 1 left and Torch with 5 left.',
     )
+  })
+})
+
+describe('features', () => {
+  const barbarian = deriveCharacter({
+    name: 'Persi',
+    level: 5,
+    abilities: { str: 18, con: 18 },
+    attacks: [{ name: 'Flail', damage: '1d8', damageType: 'bludgeoning' }],
+    custom: [{ name: 'Surprise Attack', dice: '2d6' }],
+    toggles: [
+      { name: 'Rage', damageBonus: 2, aliases: ['raging'] },
+      { name: 'Reckless Attack', advantage: true, aliases: ['reckless'] },
+    ],
+    features: [
+      { name: 'Rage', uses: { max: 3 }, description: 'Enter a rage as a bonus action.' },
+      { name: 'Reckless Attack', description: 'Throw aside all concern for defense.' },
+      { name: 'Danger Sense', description: 'Advantage on Dexterity saves against effects you can see.' },
+      { name: 'Surprise Attack', section: 'species', description: 'Extra 2d6 on the first hit of a fight.' },
+      { name: 'Grappler', section: 'feat' },
+    ],
+    hitDice: { die: 'd12' },
+  })
+  const c = (over: Partial<StatusContext> = {}) => ctx({ activeToggles: [], ...over })
+
+  it('/features reads every section as the screen lays it out, then the hit dice', () => {
+    expect(answerQuery('features', barbarian, c())).toBe(
+      'Class features: Rage off with 3 of 3 uses, Reckless Attack off, Danger Sense. Species traits: Surprise Attack. Feats: Grappler. Hit dice: 5 of 5.',
+    )
+    expect(answerQuery('feats', barbarian, c({ activeToggles: ['Rage'], uses: { Rage: 2 }, hitDice: 4 }))).toBe(
+      'Class features: Rage on with 2 of 3 uses, Reckless Attack off, Danger Sense. Species traits: Surprise Attack. Feats: Grappler. Hit dice: 4 of 5.',
+    )
+    // Toggles that are not features and not items are listed under Other, so nothing switchable is hidden.
+    expect(ask('features')).toBe('Class features: none. Species traits: none. Feats: none. Other: Rage off, Shield on, Shield spell off.')
+    expect(answerQuery('features', deriveCharacter({}), ctx())).toBe(NO_FEATURES)
+  })
+
+  it('a name reads one feature, one toggle, or a roll that is also a feature', () => {
+    expect(answerQuery('rage', barbarian, c())).toBe('Rage off, 3 of 3 uses, plus 2 damage. Enter a rage as a bonus action.')
+    expect(answerQuery('raging', barbarian, c({ activeToggles: ['Rage'], uses: { Rage: 1 } }))).toBe(
+      'Rage on, 1 of 3 uses, plus 2 damage. Enter a rage as a bonus action.',
+    )
+    expect(answerQuery('reckless', barbarian, c())).toBe('Reckless Attack off, advantage to hit. Throw aside all concern for defense.')
+    expect(answerQuery('danger', barbarian, c())).toBe('Danger Sense. Advantage on Dexterity saves against effects you can see.')
+    expect(answerQuery('grappler', barbarian, c())).toBe('Grappler.')
+    expect(answerQuery('surprise', barbarian, c())).toBe('Surprise Attack: 2d6. Extra 2d6 on the first hit of a fight.')
+    expect(ask('shield spell')).toBe('Shield spell off, plus 5 armor class.')
+    expect(answerQuery('hd', barbarian, c({ hitDice: 2 }))).toBe('Hit dice: 2 of 5, d12.')
+    expect(ask('hit dice')).toBe(NO_HIT_DICE)
   })
 })

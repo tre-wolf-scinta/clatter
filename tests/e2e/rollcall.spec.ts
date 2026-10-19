@@ -275,6 +275,52 @@ test('the inventory HUD: open by typing or shortcut, select with toggle buttons,
   )
 })
 
+test('the feats and abilities HUD: sections, toggles with uses, the rest section, and Done', async ({ page }) => {
+  await type(page, '/f')
+  const hud = page.getByRole('dialog', { name: 'Feats and abilities' })
+  await expect(hud).toBeVisible()
+  await expect(hud).toBeFocused()
+  await expect(hud.getByRole('heading', { level: 3 })).toHaveText(['Class features', 'Species traits', 'Feats', 'Rest'])
+  const steady = hud.getByRole('button', { name: /^Steady Aim/ })
+  await expect(steady).toHaveAttribute('aria-pressed', 'false')
+  await steady.click()
+  await expect(steady).toHaveAttribute('aria-pressed', 'true')
+  await expect(hud.getByRole('status')).toContainText('Steady Aim will be on after Done.')
+  await hud.getByRole('button', { name: 'Lucky, 3 of 3 uses' }).click()
+  await expect(hud.getByRole('status')).toContainText('Lucky will be used on Done.')
+  await hud.getByRole('button', { name: 'Cunning Action' }).click()
+  await expect(hud.getByRole('status')).toContainText('bonus action to Dash, Disengage, or Hide')
+  await expect(hud.getByRole('button', { name: 'Hit die, 5 of 5 left, d8' })).toBeVisible()
+  await expectNoAxeViolations(page, 'feats and abilities open')
+  await hud.getByRole('button', { name: 'Done' }).click()
+  await expect(hud).toBeHidden()
+  await expect(result(page)).toContainText('Steady Aim on. Used Lucky. 2 uses left.')
+  await expect(rollBox(page)).toBeFocused()
+  await type(page, 'attack')
+  await expect(result(page)).toContainText(
+    /Rapier with advantage and Steady Aim: \d+ to hit\. You rolled an? \d+ and an? \d+, kept the \d+, plus 7 from modifiers\./,
+  )
+  await page.keyboard.press('Alt+a')
+  await expect(hud).toBeVisible()
+  await expect(hud.getByRole('button', { name: 'Lucky, 2 of 3 uses' })).toBeVisible()
+  await hud.getByRole('button', { name: 'Cancel' }).click()
+  await expect(hud).toBeHidden()
+  await type(page, 'feats')
+  await expect(result(page)).toContainText(
+    'Class features: Sneak Attack, Cunning Action, Steady Aim on, Uncanny Dodge. Species traits: Darkvision, Fey Ancestry. Feats: Lucky with 2 of 3 uses. Hit dice: 5 of 5.',
+  )
+  await type(page, '-10')
+  await type(page, 'hit die')
+  await expect(result(page)).toContainText(
+    /Spent a hit die: healed \d+\. \d+ of 38 hit points\. You rolled an? \d+ plus 2 from Constitution\. 4 hit dice left\./,
+  )
+  await page.goto('/')
+  await type(page, '/hd')
+  await expect(result(page)).toContainText('Hit dice: 4 of 5, d8.')
+  await type(page, 'long rest')
+  await expect(result(page)).toContainText('Long rest. 38 of 38 hit points. Lucky recovered. Hit dice: 5 of 5.')
+})
+
 test('no axe violations on the initial page', async ({ page }) => {
   await expectNoAxeViolations(page, 'initial page')
 })

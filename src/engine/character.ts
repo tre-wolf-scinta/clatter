@@ -70,6 +70,19 @@ export type Proficiency = 'none' | 'half' | 'proficient' | 'expertise'
 export type ItemKind = 'weapon' | 'armor' | 'shield' | 'potion' | 'utility' | 'quest'
 export const ITEM_KINDS: readonly ItemKind[] = ['weapon', 'armor', 'shield', 'potion', 'utility', 'quest']
 
+/** The sections of the Feats and abilities screen, in the order they are read. */
+export type FeatureSection = 'class' | 'species' | 'feat' | 'other'
+export const FEATURE_SECTIONS: readonly FeatureSection[] = ['class', 'species', 'feat', 'other']
+export const FEATURE_SECTION_NAMES: Record<FeatureSection, string> = {
+  class: 'Class features',
+  species: 'Species traits',
+  feat: 'Feats',
+  other: 'Other',
+}
+
+/** When limited uses come back. */
+export type RestKind = 'short rest' | 'long rest'
+
 /**
  * The JSON a player writes or imports. Everything is optional and forgiving:
  * names are case-insensitive, "Sleight of Hand" / "sleight_of_hand" / "soh" all work,
@@ -110,8 +123,12 @@ export interface CharacterFile {
   consumables?: ConsumableFile[]
   /** Everything carried: weapons, armor, shields, potions, utility, quest items. */
   inventory?: ItemFile[]
+  /** Class features, species traits, and feats: what they do and how many uses they have. */
+  features?: FeatureFile[]
   /** Maximum hit points. Current hit points are tracked in the app, per device. */
   hitPoints?: { max: number }
+  /** Hit dice for short rests: { "die": "d12", "count": 5 }. Count defaults to the level. */
+  hitDice?: HitDiceFile
   /**
    * Armor class while wearing no armor, in the order it is spoken:
    * [{ "name": "unarmored defense", "value": 10 }, { "name": "Dexterity", "value": 2 }].
@@ -191,12 +208,39 @@ export interface ToggleFile {
   damageDice?: string
   /** Added to armor class while on: a shield, the Shield spell, a potion. */
   acBonus?: number
+  /** Advantage on the roll to hit while on: Reckless Attack, Steady Aim. */
+  advantage?: boolean
   /** Starts switched on, for an equipped item. Default off. */
   on?: boolean
   /** Attack names or aliases this applies to. Leave out for every attack. */
   appliesTo?: string[]
   /** Extra words that switch it: "raging", "sneak". */
   aliases?: string[]
+}
+
+export interface FeatureFile {
+  name: string
+  /** class, species, feat, or other. Default class. */
+  section?: string
+  /** Read after the name in the Feats and abilities screen, and on request with /rage. */
+  description?: string
+  aliases?: string[]
+  /** Limited uses and when they come back: { "max": 3, "per": "long rest" }. Default per: long rest. */
+  uses?: { max: number; per?: string }
+  /**
+   * The toggle this feature switches on and off, by name. Default: the toggle with the
+   * same name, if there is one. Switching it on spends a use.
+   */
+  toggle?: string
+  /** Healing when used: Second Wind "1d10+5". */
+  heal?: string
+}
+
+export interface HitDiceFile {
+  /** "d12" or 12. */
+  die: string | number
+  /** How many you have. Default: the level. */
+  count?: number
 }
 
 export interface ArmorClassPart {
@@ -282,6 +326,8 @@ export interface DerivedToggle {
   damageBonus: number
   damageDice: DiceExpr | null
   acBonus: number
+  /** Advantage on the roll to hit while on. */
+  advantage: boolean
   /** Starts switched on. */
   on: boolean
   /** Normalized attack names or aliases; null means every attack. */
@@ -289,9 +335,27 @@ export interface DerivedToggle {
   aliases: string[]
 }
 
+export interface DerivedFeature {
+  name: string
+  section: FeatureSection
+  description: string | null
+  aliases: string[]
+  /** Limited uses per rest; null when it can be used at will or is always on. */
+  uses: { max: number; per: RestKind } | null
+  /** The toggle this feature switches, by name; null when it is not a toggle. */
+  toggle: string | null
+  /** Healing when used. */
+  heal: DiceExpr | null
+}
+
+export interface DerivedHitDice {
+  sides: number
+  count: number
+}
+
 /** True when the toggle changes attack rolls or damage (as opposed to only armor class). */
 export const affectsAttacks = (t: DerivedToggle): boolean =>
-  t.attackBonus !== 0 || t.damageBonus !== 0 || t.damageDice !== null
+  t.attackBonus !== 0 || t.damageBonus !== 0 || t.damageDice !== null || t.advantage
 
 export interface Character {
   name: string
@@ -308,8 +372,12 @@ export interface Character {
   /** File consumables plus every potion and consumable utility item in the inventory. */
   consumables: DerivedConsumable[]
   items: DerivedItem[]
+  /** Class features, species traits, feats, in file order. */
+  features: DerivedFeature[]
   /** Null when the file gives no hit points. */
   hitPointsMax: number | null
+  /** Null when the file gives no hit dice. */
+  hitDice: DerivedHitDice | null
   /** Armor class parts while wearing no armor; null when the file gives none. */
   armorClass: ArmorClassPart[] | null
   /** Flat armor class bonuses that apply with or without armor. */
@@ -350,6 +418,38 @@ const ABILITY_LOOKUP: Record<string, Ability> = {
 
 const normKey = (s: string): string => s.trim().toLowerCase().replace(/[\s_]+/g, '-')
 export const normName = (s: string): string => s.trim().toLowerCase().replace(/[\s_-]+/g, ' ')
+
+/** What a file may call a feature's section. */
+const SECTION_WORDS: Record<string, FeatureSection> = {
+  class: 'class',
+  'class feature': 'class',
+  'class features': 'class',
+  species: 'species',
+  'species trait': 'species',
+  'species traits': 'species',
+  race: 'species',
+  racial: 'species',
+  'racial trait': 'species',
+  'racial traits': 'species',
+  lineage: 'species',
+  feat: 'feat',
+  feats: 'feat',
+  other: 'other',
+  background: 'other',
+  misc: 'other',
+}
+
+/** What a file may call a rest. */
+const REST_WORDS: Record<string, RestKind> = {
+  'long rest': 'long rest',
+  long: 'long rest',
+  lr: 'long rest',
+  day: 'long rest',
+  daily: 'long rest',
+  'short rest': 'short rest',
+  short: 'short rest',
+  sr: 'short rest',
+}
 
 function toAbility(raw: string, context: string): Ability {
   const a = ABILITY_LOOKUP[normKey(raw)]
@@ -548,6 +648,7 @@ export function deriveCharacter(file: CharacterFile): Character {
       damageBonus: numberOr(t.damageBonus, 0, `${context}.damageBonus`),
       damageDice,
       acBonus: numberOr(t.acBonus, 0, `${context}.acBonus`),
+      advantage: t.advantage === true,
       on: t.on === true,
       appliesTo:
         t.appliesTo === undefined || t.appliesTo === null
@@ -617,7 +718,17 @@ export function deriveCharacter(file: CharacterFile): Character {
     }
     if (kind !== 'armor' && acBonus !== 0) {
       addToggle(
-        { name, attackBonus: 0, damageBonus: 0, damageDice: null, acBonus, on: equipped, appliesTo: null, aliases: item.aliases },
+        {
+          name,
+          attackBonus: 0,
+          damageBonus: 0,
+          damageDice: null,
+          acBonus,
+          advantage: false,
+          on: equipped,
+          appliesTo: null,
+          aliases: item.aliases,
+        },
         `${context} (${name})`,
       )
     }
@@ -657,6 +768,63 @@ export function deriveCharacter(file: CharacterFile): Character {
     consumables.push({ name: it.name, count: it.count, heal: it.heal, toggle: it.toggle, aliases: it.aliases })
   }
 
+  const features: DerivedFeature[] = (file.features ?? []).map((f, i) => {
+    const context = `features[${i + 1}]`
+    const name = requireName(f, context, 'feature')
+    const ctx = `${context} (${name})`
+    const sectionRaw = f.section === undefined || f.section === null ? 'class' : normName(String(f.section))
+    const section = SECTION_WORDS[sectionRaw]
+    if (!section) throw new CharacterError(`${ctx}: section must be one of ${FEATURE_SECTIONS.join(', ')}.`)
+    let uses: DerivedFeature['uses'] = null
+    if (f.uses !== undefined && f.uses !== null) {
+      if (typeof f.uses !== 'object') {
+        throw new CharacterError(`${ctx}: uses must look like { "max": 3, "per": "long rest" }.`)
+      }
+      const max = numberOr(f.uses.max, NaN, `${context}.uses.max`)
+      if (!Number.isInteger(max) || max < 1) throw new CharacterError(`${ctx}: uses.max must be a whole number of 1 or more.`)
+      const perRaw = f.uses.per === undefined || f.uses.per === null ? 'long rest' : normName(String(f.uses.per))
+      const per = REST_WORDS[perRaw]
+      if (!per) throw new CharacterError(`${ctx}: uses.per must be "long rest" or "short rest".`)
+      uses = { max, per }
+    }
+    const heal = optionalDice(f.heal, ctx, 'heal', '1d10+5')
+    let toggle: string | null = null
+    if (f.toggle !== undefined && f.toggle !== null && String(f.toggle).trim() !== '') {
+      const wanted = normName(String(f.toggle))
+      const found = toggles.find((t) => normName(t.name) === wanted || t.aliases.includes(wanted))
+      if (!found) throw new CharacterError(`${ctx}: toggle "${f.toggle}" is not one of this character's toggles.`)
+      toggle = found.name
+    } else {
+      toggle = toggles.find((t) => normName(t.name) === normName(name))?.name ?? null
+    }
+    if (toggle && heal) throw new CharacterError(`${ctx}: a feature cannot both heal and switch a toggle.`)
+    const description = typeof f.description === 'string' && f.description.trim() ? f.description.trim() : null
+    return { name, section, description, aliases: stringList(f.aliases, `${context}.aliases`).map(normName), uses, toggle, heal }
+  })
+  const featureNames = new Set<string>()
+  const featureToggles = new Map<string, string>()
+  for (const f of features) {
+    const key = normName(f.name)
+    if (featureNames.has(key)) throw new CharacterError(`features: there are two features called "${f.name}".`)
+    featureNames.add(key)
+    if (f.toggle) {
+      const other = featureToggles.get(f.toggle)
+      if (other) throw new CharacterError(`features (${f.name}): toggle "${f.toggle}" already belongs to ${other}.`)
+      featureToggles.set(f.toggle, f.name)
+    }
+  }
+
+  let hitDice: DerivedHitDice | null = null
+  if (file.hitDice !== undefined && file.hitDice !== null) {
+    if (typeof file.hitDice !== 'object') throw new CharacterError('hitDice: expected { "die": "d12", "count": 5 }.')
+    const dieRaw = file.hitDice.die
+    const sides = typeof dieRaw === 'number' ? dieRaw : Number(String(dieRaw ?? '').trim().replace(/^d/i, ''))
+    if (!Number.isInteger(sides) || sides < 2) throw new CharacterError('hitDice.die: expected a die like d12.')
+    const count = numberOr(file.hitDice.count, level, 'hitDice.count')
+    if (!Number.isInteger(count) || count < 1) throw new CharacterError('hitDice.count: expected a whole number of 1 or more.')
+    hitDice = { sides, count }
+  }
+
   const aliases: Record<string, string> = {}
   for (const [k, v] of Object.entries(file.aliases ?? {})) {
     if (typeof v !== 'string') throw new CharacterError(`aliases.${k}: expected a name to roll.`)
@@ -692,7 +860,9 @@ export function deriveCharacter(file: CharacterFile): Character {
     toggles,
     consumables,
     items,
+    features,
     hitPointsMax,
+    hitDice,
     armorClass,
     armorBonuses,
     aliases,

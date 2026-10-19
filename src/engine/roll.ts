@@ -81,6 +81,13 @@ export interface AttackEffect {
   attackBonus: number
   damageBonus: number
   damageDice: DiceExpr | null
+  /** Advantage on the roll to hit: Reckless Attack. */
+  advantage?: boolean
+}
+
+/** Advantage granted by an effect: it cancels disadvantage, as at the table, and otherwise applies. */
+export function withAdvantage(mode: Mode): Mode {
+  return mode === 'disadvantage' ? 'normal' : 'advantage'
 }
 
 /** The roll to hit. Damage is a separate roll, as at the table. */
@@ -105,9 +112,10 @@ export interface AttackRollOptions {
 }
 
 export function rollAttack(attack: DerivedAttack, opts: AttackRollOptions, rng: Rng = secureRng): AttackRollResult {
-  const d20 = rollD20(opts.mode, rng)
-  const b = opts.bonus ? rollExpr(opts.bonus, rng) : null
   const effects = opts.effects ?? []
+  const mode = effects.some((e) => e.advantage) ? withAdvantage(opts.mode) : opts.mode
+  const d20 = rollD20(mode, rng)
+  const b = opts.bonus ? rollExpr(opts.bonus, rng) : null
   const effectBonuses = effects.filter((e) => e.attackBonus !== 0).map((e) => ({ name: e.name, bonus: e.attackBonus }))
   const total = d20.kept + attack.toHit + (b?.total ?? 0) + effectBonuses.reduce((s, e) => s + e.bonus, 0)
   return {

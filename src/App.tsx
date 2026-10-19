@@ -14,6 +14,7 @@ import {
   allCandidates,
   applyBatch,
   extractToggles,
+  flipToggle,
   fmtMod,
   initialRollerState,
   isSaveTarget,
@@ -29,10 +30,12 @@ import {
 } from './engine/commands'
 import { formatDiceExpr } from './engine/dice'
 import { freshHitPoints, type HitPoints } from './engine/hitpoints'
+import { usesLeft } from './engine/readouts'
 import type { Mode } from './engine/roll'
 import { SAMPLE_CHARACTER_JSON } from './engine/sample'
 import { loadJSON, loadString, saveJSON, saveString } from './storage'
 import { CharacterDialog } from './ui/CharacterDialog'
+import { FeaturesHud } from './ui/FeaturesHud'
 import { InventoryHud } from './ui/InventoryHud'
 import { LiveRegion } from './ui/LiveRegion'
 
@@ -42,6 +45,8 @@ const hpKey = (name: string): string => `clatter.hp.${name}`
 const handKey = (name: string): string => `clatter.hand.${name}`
 const armorKey = (name: string): string => `clatter.armor.${name}`
 const itemsKey = (name: string): string => `clatter.items.${name}`
+const usesKey = (name: string): string => `clatter.uses.${name}`
+const hitDiceKey = (name: string): string => `clatter.hitdice.${name}`
 const HISTORY_LIMIT = 100
 const QUICK_DICE = [4, 6, 8, 10, 12, 20, 100]
 
@@ -112,6 +117,26 @@ function initialItems(ch: Character): Record<string, number> {
   return out
 }
 
+/** Uses left of each limited feature on this device, full for anything new. */
+function initialUses(ch: Character): Record<string, number> {
+  const stored = loadJSON<Record<string, number>>(usesKey(ch.name), {})
+  const out: Record<string, number> = {}
+  for (const f of ch.features) {
+    if (!f.uses) continue
+    const n = stored[f.name]
+    out[f.name] = Number.isInteger(n) && n >= 0 && n <= f.uses.max ? n : f.uses.max
+  }
+  return out
+}
+
+/** Hit dice left on this device; null when the character has none. */
+function initialHitDice(ch: Character): number | null {
+  if (!ch.hitDice) return null
+  const raw = loadString(hitDiceKey(ch.name))
+  const n = raw ? Number(raw) : NaN
+  return Number.isInteger(n) && n >= 0 && n <= ch.hitDice.count ? n : ch.hitDice.count
+}
+
 /** Visual-only hint under the roll box; never announced, so typing stays quiet. */
 function describeSuggestion(input: string, candidates: Candidate[], ch: Character): string {
   const cmd = parseCommand(input)
@@ -125,7 +150,9 @@ function describeSuggestion(input: string, candidates: Candidate[], ch: Characte
     case 'undo':
       return 'Enter undoes the last change.'
     case 'rest':
-      return 'Enter takes a long rest.'
+      return cmd.rest === 'long rest' ? 'Enter takes a long rest.' : 'Enter takes a short rest.'
+    case 'hit-die':
+      return 'Enter spends a hit die.'
     case 'hp':
       return cmd.delta < 0 ? `Enter takes ${-cmd.delta} damage.` : `Enter heals ${cmd.delta}.`
     case 'hp-set':
@@ -137,7 +164,9 @@ function describeSuggestion(input: string, candidates: Candidate[], ch: Characte
     case 'query':
       return `Enter answers /${cmd.topic}.`
     case 'hud':
-      return cmd.screen === 'inventory' ? 'Enter opens the inventory.' : `Enter: ${cmd.screen} is not built yet.`
+      if (cmd.screen === 'spells') return 'Enter: spells are not built yet.'
+      if (cmd.screen === 'inventory') return cmd.open ? 'Enter opens the inventory.' : 'Enter reads the inventory.'
+      return cmd.open ? 'Enter opens feats and abilities.' : 'Enter reads your feats and abilities.'
     case 'wield':
       return cmd.query ? `Enter wields ${cmd.query}.` : 'Enter says what is in hand.'
     case 'unequip':
@@ -166,13 +195,16 @@ function describeSuggestion(input: string, candidates: Candidate[], ch: Characte
   }
 }
 
-/** "Rage +2 damage", "Shield +2 AC", "Great Weapon Master -5 to hit, +10 damage". */
-function toggleLabel(t: DerivedToggle): string {
+/** "Rage +2 damage, 2 of 3 uses", "Shield +2 AC", "Reckless Attack advantage to hit". */
+function toggleLabel(t: DerivedToggle, ch: Character, uses: Record<string, number>): string {
   const parts: string[] = []
+  if (t.advantage) parts.push('advantage to hit')
   if (t.attackBonus) parts.push(`${fmtMod(t.attackBonus)} to hit`)
   if (t.damageBonus) parts.push(`${fmtMod(t.damageBonus)} damage`)
   if (t.damageDice) parts.push(`+${formatDiceExpr(t.damageDice)} damage`)
   if (t.acBonus) parts.push(`${fmtMod(t.acBonus)} AC`)
+  const f = ch.features.find((x) => x.toggle === t.name && x.uses)
+  if (f?.uses) parts.push(`${usesLeft(f, uses)} of ${f.uses.max} uses`)
   return parts.length ? `${t.name} ${parts.join(', ')}` : t.name
 }
 
@@ -221,8 +253,11 @@ export default function App() {
   const [inHand, setInHand] = useState<string | null>(null)
   const [wearing, setWearing] = useState<string | null>(null)
   const [items, setItems] = useState<Record<string, number>>({})
+  const [uses, setUses] = useState<Record<string, number>>({})
+  const [hitDice, setHitDice] = useState<number | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [hudOpen, setHudOpen] = useState(false)
+  const [featsOpen, setFeatsOpen] = useState(false)
   const roller = useRef<RollerState>(initialRollerState())
   const inputRef = useRef<HTMLInputElement>(null)
   const nextId = useRef(1)
@@ -235,12 +270,15 @@ export default function App() {
     roller.current = { ...roller.current, stickyMode, activeToggles }
   }, [stickyMode, activeToggles])
 
-  // A new character: its hit points, weapon in hand, armor, and items for this device, its equipped toggles, and a clean slate.
+  // A new character: its hit points, weapon in hand, armor, items, uses, and hit dice for
+  // this device, its equipped toggles, and a clean slate.
   useEffect(() => {
     const defaults = character.toggles.filter((t) => t.on).map((t) => t.name)
     const hand = initialHand(character)
     const armor = initialArmor(character)
     const stock = initialItems(character)
+    const spent = initialUses(character)
+    const dice = initialHitDice(character)
     roller.current = {
       ...roller.current,
       hp: initialHitPoints(character),
@@ -249,6 +287,8 @@ export default function App() {
       inHand: hand,
       wearing: armor,
       items: stock,
+      uses: spent,
+      hitDice: dice,
       last: null,
       pendingCrit: null,
     }
@@ -256,16 +296,24 @@ export default function App() {
     setInHand(hand)
     setWearing(armor)
     setItems(stock)
+    setUses(spent)
+    setHitDice(dice)
   }, [character])
 
   // "/" anywhere outside a text field jumps back to the roll box. Alt+I opens the
-  // inventory from anywhere, text box included; the button's accesskey says the same
-  // thing to NVDA, and this handler makes it work even where accesskeys differ.
+  // inventory and Alt+A the feats and abilities from anywhere, text box included; the
+  // buttons' accesskeys say the same thing to NVDA, and this handler makes them work
+  // even where accesskeys differ.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'i') {
         e.preventDefault()
         setHudOpen(true)
+        return
+      }
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'a') {
+        e.preventDefault()
+        setFeatsOpen(true)
         return
       }
       if (e.key !== '/' || e.ctrlKey || e.altKey || e.metaKey) return
@@ -318,10 +366,14 @@ export default function App() {
     setInHand(next.state.inHand)
     setWearing(next.state.wearing)
     setItems(next.state.items)
+    setUses(next.state.uses)
+    setHitDice(next.state.hitDice)
     if (next.state.hp) saveJSON(hpKey(character.name), next.state.hp)
     saveString(handKey(character.name), next.state.inHand ?? '')
     saveString(armorKey(character.name), next.state.wearing ?? '')
     saveJSON(itemsKey(character.name), next.state.items)
+    saveJSON(usesKey(character.name), next.state.uses)
+    saveString(hitDiceKey(character.name), next.state.hitDice === null ? '' : String(next.state.hitDice))
     if (next.outcome.result) {
       setHistory((h) => [{ id: nextId.current++, text: next.outcome.text }, ...h].slice(0, HISTORY_LIMIT))
     }
@@ -331,9 +383,10 @@ export default function App() {
   function onSubmit(e: FormEvent) {
     e.preventDefault()
     const cmd = parseCommand(input)
-    if (cmd.kind === 'hud' && cmd.screen === 'inventory') {
+    if (cmd.kind === 'hud' && cmd.open && cmd.screen !== 'spells') {
       setInput('')
-      setHudOpen(true)
+      if (cmd.screen === 'inventory') setHudOpen(true)
+      else setFeatsOpen(true)
       return
     }
     finish(runCommand(input, character, roller.current, announceOptions))
@@ -359,8 +412,9 @@ export default function App() {
     finish(performRoll(roller.current, resolved, character, announceOptions))
   }
 
-  function applyInventory(ops: BatchOp[]) {
+  function applyOps(ops: BatchOp[]) {
     setHudOpen(false)
+    setFeatsOpen(false)
     finish(applyBatch(roller.current, ops, character, announceOptions))
   }
 
@@ -450,6 +504,9 @@ export default function App() {
             <button type="button" accessKey="i" onClick={() => setHudOpen(true)}>
               Inventory
             </button>
+            <button type="button" accessKey="a" onClick={() => setFeatsOpen(true)}>
+              Feats and abilities
+            </button>
             <button type="button" aria-pressed={stickyMode === 'advantage'} onClick={() => toggleMode('advantage')}>
               Advantage
             </button>
@@ -465,11 +522,9 @@ export default function App() {
                 key={t.name}
                 type="button"
                 aria-pressed={activeToggles.includes(t.name)}
-                onClick={() =>
-                  setActiveToggles((a) => (a.includes(t.name) ? a.filter((n) => n !== t.name) : [...a, t.name]))
-                }
+                onClick={() => finish(flipToggle(roller.current, t, character))}
               >
-                {toggleLabel(t)}
+                {toggleLabel(t, character, uses)}
               </button>
             ))}
             <button type="button" onClick={() => say(roller.current.lastText ?? 'Nothing rolled yet.')}>
@@ -610,21 +665,31 @@ export default function App() {
             <li>
               Inventory: type /i, press the Inventory button, or press its shortcut, Alt+I in Chrome and Edge,
               Alt+Shift+I in Firefox. Inside, H moves between sections, B between items, Enter selects, Done applies
-              everything at once, Escape cancels. One undo reverses the whole batch.
+              everything at once, Escape cancels. One undo reverses the whole batch. The bare word inventory reads it
+              aloud instead.
+            </li>
+            <li>
+              Feats and abilities: type /f, press the Feats and abilities button, or press Alt+A (Alt+Shift+A in
+              Firefox). Same layout: Class features, Species traits, Feats, then Rest with the hit die and both rests.
+              Features with uses say how many are left; Rage spends one when it switches on. The bare word feats reads
+              it aloud.
             </li>
             <li>
               Gear and items by typing: equip shield and unequip shield, wear chain shirt and doff armor, drink healing
-              or use torch. /equipped reads what you hold, your armor, your shield, and what you carry; /inventory reads
-              every section; /potions reads what is left.
+              or use torch, use second wind. /equipped reads what you hold, your armor, your shield, and what you
+              carry; /potions reads what is left.
             </li>
             <li>
               Hit points: minus 5 takes 5 (temporary hit points go first), plus 7 heals 7, temp 8 sets temporary hit
-              points, hp reads them, undo reverses the last change, long rest resets. Death saves keep their own
-              count.
+              points, hp reads them, undo reverses the last change. Death saves keep their own count.
             </li>
             <li>
-              Questions start with a slash: /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /potions,
-              /hp, /status, or a name such as /stealth or /str.
+              Rests: short rest recovers short-rest features and says how many hit dice you have; hit die spends one;
+              long rest recovers hit points, every use, and half your hit dice.
+            </li>
+            <li>
+              Questions start with a slash: /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /features,
+              /potions, /hp, /status, or a name such as /stealth, /str, or /rage.
             </li>
             <li>Short forms work: perc, soh, init, hist. If it is ambiguous you are told, never guessed.</li>
             <li>Add adv or dis for advantage or disadvantage. Add +2 or +1d4 for a bonus such as Guidance.</li>
@@ -652,7 +717,16 @@ export default function App() {
         activeToggles={activeToggles}
         items={items}
         onCancel={() => setHudOpen(false)}
-        onApply={applyInventory}
+        onApply={applyOps}
+      />
+      <FeaturesHud
+        open={featsOpen}
+        character={character}
+        activeToggles={activeToggles}
+        uses={uses}
+        hitDice={hitDice}
+        onCancel={() => setFeatsOpen(false)}
+        onApply={applyOps}
       />
     </>
   )

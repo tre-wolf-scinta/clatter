@@ -8,7 +8,9 @@
  * Prints the JSON, or writes it to the given file. Things this script cannot
  * work out are left out rather than guessed; check the numbers against the
  * sheet once, then edit the JSON freely. Quest items cannot be told apart
- * from other gear, so change their kind by hand. Not handled yet: spells,
+ * from other gear, so change their kind by hand. Features come across with
+ * their descriptions and limited uses (Rage, 3 per long rest); a multiclass
+ * character gets one hit die size, the main class's. Not handled yet: spells,
  * unarmed strikes, and items whose bonuses depend on being equipped and
  * attuned in unusual ways.
  */
@@ -76,24 +78,49 @@ function activeModifiers(c) {
   return out
 }
 
-/** D&D Beyond descriptions are HTML; keep the words, capped so a screen reader is not stuck in one. */
+const ENTITIES = {
+  nbsp: ' ',
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  lsquo: "'",
+  rsquo: "'",
+  ldquo: '"',
+  rdquo: '"',
+  hellip: '...',
+  times: ' times ',
+  // Dashes become commas: a screen reader reads a comma as a pause, a dash as a word or nothing.
+  mdash: ', ',
+  ndash: ', ',
+}
+
+/**
+ * D&D Beyond descriptions are HTML; keep the words, capped so a screen reader is
+ * not stuck in one. The cap falls at the end of a sentence when one is near
+ * enough, else at a word.
+ */
 function plainText(html, max = 500) {
   if (!html || typeof html !== 'string') return undefined
   const text = html
     .replace(/<br\s*\/?>/gi, ' ')
     .replace(/<\/(p|li|div|h\d)>/gi, ' ')
     .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&rsquo;/g, "'")
-    .replace(/&ldquo;|&rdquo;/g, '"')
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
+    .replace(/&([a-z]+);/gi, (m, name) => ENTITIES[name.toLowerCase()] ?? m)
+    .replace(/\s*[—–]\s*/g, ', ')
+    .replace(/\s+,/g, ',')
     .replace(/\s+/g, ' ')
     .trim()
   if (!text) return undefined
-  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}.` : text
+  if (text.length <= max) return text
+  const head = text.slice(0, max)
+  const sentence = Math.max(head.lastIndexOf('. '), head.lastIndexOf('! '), head.lastIndexOf('? '))
+  if (sentence >= max / 2) return head.slice(0, sentence + 1)
+  const space = head.lastIndexOf(' ')
+  return `${(space > 0 ? head.slice(0, space) : head).replace(/[,;:]+$/, '')}.`
 }
 
 /** Drops undefined values, empty arrays, and empty objects so the JSON stays readable. */
@@ -279,6 +306,70 @@ export function convert(c) {
   if (rogue) {
     toggles.push({ name: 'Sneak Attack', damageDice: `${Math.ceil(rogue.level / 2)}d6`, aliases: ['sneak', 'sa'] })
   }
+  // Reckless Attack: advantage on Strength attacks while it is on. The feature of the same name links to it.
+  if (barbarian && barbarian.level >= 2) {
+    const strength = attacks.filter((a) => a.ability === 'str').map((a) => a.name)
+    toggles.push({ name: 'Reckless Attack', advantage: true, appliesTo: strength, aliases: ['reckless'] })
+  }
+
+  // Limited uses by feature name, from the actions D&D Beyond derives: "Rage (Enter)" has 3 uses per long rest.
+  const prof = 2 + Math.floor((Math.max(1, level) - 1) / 4)
+  const usesByName = new Map()
+  for (const list of Object.values(c.actions ?? {})) {
+    for (const a of list ?? []) {
+      const lu = a.limitedUse
+      if (!lu) continue
+      let max = lu.maxUses ?? null
+      if (max === null && lu.statModifierUsesId) max = Math.max(1, abilityMod(abilities[ABILITY[lu.statModifierUsesId]] ?? 10))
+      if (max === null && lu.useProficiencyBonus) max = prof
+      if (!max || max < 1) continue
+      const name = String(a.name).replace(/\s*\(.*\)\s*$/, '').trim()
+      if (!usesByName.has(name)) usesByName.set(name, { max, per: lu.resetType === 1 ? 'short rest' : 'long rest' })
+    }
+  }
+
+  // Class features, species traits, feats, and the background feature, with descriptions and uses.
+  // Bookkeeping entries (score increases, languages, the subclass slot) are left out; "4: Weapon Mastery" style
+  // repeats fold into one. Features above the character's level are left out too.
+  const SKIP_CLASS = /^(ability score improvement|.* subclass|core .* traits|epic boon|proficiencies|hit points|equipment)$/i
+  const SKIP_SPECIES = /^(ability score increases?|languages?|creature type|size|speed|age|alignment)$/i
+  const features = []
+  const seenFeatures = new Set()
+  const addFeature = (rawName, section, description) => {
+    const name = String(rawName ?? '')
+      .replace(/^\d+:\s*/, '')
+      .trim()
+    if (!name || seenFeatures.has(name.toLowerCase())) return
+    seenFeatures.add(name.toLowerCase())
+    features.push({ name, section, description: plainText(description, 700), uses: usesByName.get(name) })
+  }
+  for (const k of c.classes ?? []) {
+    const gained = (k.classFeatures ?? [])
+      .map((f) => f.definition)
+      .filter((d) => d && (d.requiredLevel ?? 1) <= k.level)
+      .sort((a, b) => (a.requiredLevel ?? 1) - (b.requiredLevel ?? 1))
+    for (const d of gained) {
+      const name = String(d.name).replace(/^\d+:\s*/, '')
+      if (SKIP_CLASS.test(name)) continue
+      addFeature(name, 'class', d.description)
+    }
+  }
+  for (const t of c.race?.racialTraits ?? []) {
+    const d = t.definition
+    if (!d || SKIP_SPECIES.test(String(d.name))) continue
+    addFeature(d.name, 'species', d.description)
+  }
+  for (const f of c.feats ?? []) {
+    const d = f.definition
+    if (!d || /^(\d+:\s*)?weapon mastery$/i.test(String(d.name))) continue
+    addFeature(d.name, 'feat', d.description)
+  }
+  const background = c.background?.definition
+  if (background?.featureName) addFeature(background.featureName, 'other', background.featureDescription)
+
+  // Hit dice: the main class's die, one per level.
+  const mainClass = [...(c.classes ?? [])].sort((a, b) => b.level - a.level)[0]
+  const hitDice = mainClass?.definition?.hitDice ? { die: `d${mainClass.definition.hitDice}`, count: level } : undefined
 
   return prune({
     name: c.name,
@@ -291,7 +382,9 @@ export function convert(c) {
     custom,
     toggles,
     inventory,
+    features,
     hitPoints: hitPointsMax > 0 ? { max: hitPointsMax } : undefined,
+    hitDice,
     armorClass: { parts: acParts, bonuses: acBonuses.length ? acBonuses : undefined },
     source: {
       dndBeyond: c.readonlyUrl ?? `https://www.dndbeyond.com/characters/${c.id}`,
