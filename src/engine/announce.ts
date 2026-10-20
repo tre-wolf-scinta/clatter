@@ -15,6 +15,7 @@ import type {
   DamageRollResult,
   DeathSaveResult,
   DiceOnlyResult,
+  HealRollResult,
   RollResult,
 } from './roll'
 
@@ -35,6 +36,8 @@ export function announce(r: RollResult, opts: AnnounceOptions): string {
       return announceAttack(r, opts)
     case 'damage':
       return announceDamage(r, opts)
+    case 'heal':
+      return announceHeal(r, opts)
     case 'dice':
       return announceDice(r, opts)
   }
@@ -168,14 +171,22 @@ function announceAttack(r: AttackRollResult, opts: AnnounceOptions): string {
 function announceDamage(r: DamageRollResult, opts: AnnounceOptions): string {
   const type = r.damageType ? ` ${r.damageType}` : ''
   let s = `${r.critical ? 'Critical hit! ' : ''}${r.label}${withText(null, r.effectNames)}: ${r.total}${type} damage.`
+  if (r.save) s += ` ${r.save.ability} save DC ${r.save.dc} ${r.save.effect === 'half' ? 'for half' : 'to avoid it'}.`
   if (opts.breakdown) {
     let extra = ''
     for (const e of r.effects) {
       if (e.bonus !== 0) extra += `, ${plusMinus(e.bonus, e.name)}`
       if (e.dice) extra += `, plus ${e.dice.total} from ${e.name}`
     }
-    s += ` You rolled ${describeDice(r.damage, 'modifiers')}${extra}.`
+    s += ` You rolled ${describeDice(r.damage, r.flatFrom ?? undefined)}${extra}.`
   }
+  return s
+}
+
+/** "Cure Wounds: heals 9. You rolled a 5 plus 4 from modifiers." */
+function announceHeal(r: HealRollResult, opts: AnnounceOptions): string {
+  let s = `${r.label}: heals ${r.total}.`
+  if (opts.breakdown) s += ` You rolled ${describeDice(r.result, 'modifiers')}.`
   return s
 }
 

@@ -10,9 +10,11 @@
  * sheet once, then edit the JSON freely. Quest items cannot be told apart
  * from other gear, so change their kind by hand. Features come across with
  * their descriptions and limited uses (Rage, 3 per long rest); a multiclass
- * character gets one hit die size, the main class's. Not handled yet: spells,
- * unarmed strikes, and items whose bonuses depend on being equipped and
- * attuned in unusual ways.
+ * character gets one hit die size, the main class's. Spells come across with
+ * their dice, save, attack, concentration, and slots (the PHB multiclass table
+ * when more than one class casts); a spell whose damage type is chosen on
+ * casting gets no type. Not handled yet: unarmed strikes, and items whose
+ * bonuses depend on being equipped and attuned in unusual ways.
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
@@ -200,13 +202,21 @@ export function convert(c) {
   const inventory = []
   for (const it of c.inventory ?? []) {
     const d = it.definition
+    if (!d?.name) continue
+    const key = String(d.name).toLowerCase()
+    // Two rows with one name (two spell scrolls) become one item with the counts added.
+    const twin = inventory.find((x) => x.name.toLowerCase() === key)
+    if (twin) {
+      twin.count = (twin.count ?? 1) + (it.quantity > 0 ? it.quantity : 1)
+      twin.equipped = twin.equipped || (it.equipped ? true : undefined)
+      continue
+    }
     const base = {
       name: d.name,
       count: it.quantity > 1 ? it.quantity : undefined,
       description: plainText(d.description),
       equipped: it.equipped ? true : undefined,
     }
-    const key = String(d.name).toLowerCase()
     if (d.filterType === 'Weapon' && d.damage?.diceString) {
       inventory.push({ ...base, kind: 'weapon' })
     } else if (d.filterType === 'Armor' && d.armorTypeId >= 1 && d.armorTypeId <= 3) {
@@ -371,6 +381,116 @@ export function convert(c) {
   const mainClass = [...(c.classes ?? [])].sort((a, b) => b.level - a.level)[0]
   const hitDice = mainClass?.definition?.hitDice ? { die: `d${mainClass.definition.hitDice}`, count: level } : undefined
 
+  // Spellcasting: the ability of the main caster class (or subclass, for an Arcane Trickster), slots
+  // from that class's own table, or the PHB multiclass table when more than one class casts, and
+  // pact magic for Warlocks. D&D Beyond's spellSlots list only says what is used; the maxes live in the rules.
+  const MULTICLASS_SLOTS = [
+    [2], [3], [4, 2], [4, 3], [4, 3, 2], [4, 3, 3], [4, 3, 3, 1], [4, 3, 3, 2], [4, 3, 3, 3, 1], [4, 3, 3, 3, 2],
+    [4, 3, 3, 3, 2, 1], [4, 3, 3, 3, 2, 1], [4, 3, 3, 3, 2, 1, 1], [4, 3, 3, 3, 2, 1, 1], [4, 3, 3, 3, 2, 1, 1, 1],
+    [4, 3, 3, 3, 2, 1, 1, 1], [4, 3, 3, 3, 2, 1, 1, 1, 1], [4, 3, 3, 3, 3, 1, 1, 1, 1], [4, 3, 3, 3, 3, 2, 1, 1, 1],
+    [4, 3, 3, 3, 3, 2, 2, 1, 1],
+  ]
+  const casters = (c.classes ?? [])
+    .map((k) => ({ k, def: k.definition.canCastSpells ? k.definition : k.subclassDefinition?.canCastSpells ? k.subclassDefinition : null }))
+    .filter((x) => x.def)
+  const warlockLevel = casters.filter((x) => x.k.definition.name === 'Warlock').reduce((s, x) => s + x.k.level, 0)
+  const slotCasters = casters.filter((x) => x.k.definition.name !== 'Warlock')
+  const mainCaster = [...casters].sort((a, b) => b.k.level - a.k.level)[0]
+  const spellAbility = mainCaster ? ABILITY[mainCaster.def.spellCastingAbilityId] : undefined
+  let slotTable
+  if (slotCasters.length === 1) {
+    // levelSpellSlots is indexed by class level; entry 0 is an unleveled character.
+    slotTable = slotCasters[0].def.spellRules?.levelSpellSlots?.[slotCasters[0].k.level]
+  } else if (slotCasters.length > 1) {
+    const casterLevel = slotCasters.reduce(
+      (s, x) => s + Math.floor(x.k.level / (x.def.spellRules?.multiClassSpellSlotDivisor || 1)),
+      0,
+    )
+    slotTable = MULTICLASS_SLOTS[Math.min(20, Math.max(1, casterLevel)) - 1]
+  }
+  const slots = slotTable ? slotTable.slice(0, 9).map((n) => n ?? 0) : undefined
+  while (slots && slots.length && !slots[slots.length - 1]) slots.pop()
+  const pact = warlockLevel
+    ? { level: Math.min(5, Math.ceil(warlockLevel / 2)), count: warlockLevel >= 17 ? 4 : warlockLevel >= 11 ? 3 : warlockLevel >= 2 ? 2 : 1 }
+    : undefined
+
+  // Every spell once, with its dice: cantrips at the character's level, leveled spells with their
+  // upcast dice. A spell that adds to armor class while it lasts (Shield, Haste) gets a toggle of its own.
+  // Some lists hold null entries (a spell slot on the sheet with nothing in it yet).
+  const spellEntries = [
+    ...(c.classSpells ?? []).flatMap((cs) =>
+      (cs.spells ?? []).filter(Boolean).map((s) => ({ s, cls: (c.classes ?? []).find((k) => k.id === cs.characterClassId) })),
+    ),
+    ...Object.values(c.spells ?? {})
+      .flatMap((list) => (Array.isArray(list) ? list : []))
+      .filter(Boolean)
+      .map((s) => ({ s, cls: null })),
+  ]
+  const bestDice = (mod) => {
+    const defs = mod?.atHigherLevels?.higherLevelDefinitions ?? []
+    return defs.filter((h) => h.dice?.diceString).sort((a, b) => b.level - a.level)
+  }
+  const spells = []
+  const seenSpells = new Set()
+  for (const { s, cls } of spellEntries) {
+    const d = s.definition
+    if (!d?.name || seenSpells.has(d.name.toLowerCase())) continue
+    seenSpells.add(d.name.toLowerCase())
+    const spellLevel = d.level ?? 0
+    const damageMods = (d.modifiers ?? []).filter((m) => m.type === 'damage' && m.die?.diceString)
+    const healMods = (d.modifiers ?? []).filter((m) => m.type === 'bonus' && m.subType === 'hit-points' && m.die?.diceString)
+    const scale = (mod, base) => {
+      const defs = bestDice(mod)
+      if (!defs.length) return { dice: base }
+      if (d.scaleType === 'characterlevel') {
+        const reached = defs.find((h) => h.level <= level)
+        return { dice: reached ? reached.dice.diceString : base }
+      }
+      return { dice: base, upcast: defs[defs.length - 1].dice.diceString }
+    }
+    const dmg = damageMods[0] ? scale(damageMods[0], damageMods[0].die.diceString) : {}
+    const types = new Set(damageMods.map((m) => m.subType))
+    let heal
+    let healUpcast
+    if (healMods[0]) {
+      const h = scale(healMods[0], healMods[0].die.diceString)
+      const mod = healMods[0].usePrimaryStat && spellAbility ? abilityMod(abilities[spellAbility]) : 0
+      heal = mod ? `${h.dice}${mod > 0 ? '+' : ''}${mod}` : h.dice
+      healUpcast = h.upcast
+    }
+    const save = d.requiresSavingThrow && d.saveDcAbilityId ? ABILITY[d.saveDcAbilityId] : undefined
+    const kind = d.requiresAttackRoll ? 'attack' : save ? 'save' : heal ? 'heal' : dmg.dice ? 'damage' : undefined
+    const prepares = Boolean(cls?.definition?.spellPrepareType)
+    const prepared = s.prepared || s.alwaysPrepared || !prepares ? undefined : false
+    // A flat armor class bonus sits on the modifier's die as fixedValue (Shield 5, Haste 2).
+    const acBonusOf = (m) => m.die?.fixedValue ?? m.fixedValue ?? m.value ?? 0
+    const ac = (d.modifiers ?? []).find((m) => m.type === 'bonus' && m.subType === 'armor-class' && acBonusOf(m) > 0)
+    let toggle
+    if (ac && spellLevel > 0) {
+      toggle = `${d.name} spell`
+      if (!toggles.some((t) => t.name === toggle)) toggles.push({ name: toggle, acBonus: acBonusOf(ac) })
+    }
+    const lu = s.limitedUse
+    const uses = lu?.maxUses ? { max: lu.maxUses, per: lu.resetType === 1 ? 'short rest' : 'long rest' } : undefined
+    spells.push({
+      name: d.name,
+      level: spellLevel,
+      kind,
+      damage: dmg.dice,
+      damageType: dmg.dice && types.size === 1 ? damageMods[0].subType : undefined,
+      save,
+      heal,
+      upcast: dmg.upcast ?? healUpcast,
+      toggle,
+      concentration: d.concentration ? true : undefined,
+      ritual: d.ritual ? true : undefined,
+      prepared,
+      uses,
+      description: plainText(d.description, 700),
+    })
+  }
+  const spellcasting = spells.length || slots?.length || pact ? { ability: spellAbility, slots, pact } : undefined
+
   return prune({
     name: c.name,
     level,
@@ -383,6 +503,8 @@ export function convert(c) {
     toggles,
     inventory,
     features,
+    spellcasting,
+    spells,
     hitPoints: hitPointsMax > 0 ? { max: hitPointsMax } : undefined,
     hitDice,
     armorClass: { parts: acParts, bonuses: acBonuses.length ? acBonuses : undefined },

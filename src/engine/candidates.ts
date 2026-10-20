@@ -10,6 +10,7 @@ export type Target =
   | { kind: 'death-save' }
   | { kind: 'attack'; index: number }
   | { kind: 'custom'; index: number }
+  | { kind: 'spell'; index: number }
 
 export interface Candidate {
   key: string
@@ -102,6 +103,31 @@ export function allCandidates(ch: Character): Candidate[] {
       target: { kind: 'custom', index },
     })
   })
+  ch.spells.forEach((s, index) => {
+    const sc = ch.spellcasting
+    const type = s.damageType ? ` ${s.damageType}` : ''
+    let buttonLabel = s.name
+    let damageLabel: string | undefined
+    if (s.kind === 'attack' && s.damage) {
+      buttonLabel = `${s.name} ${fmtMod(sc?.attackBonus ?? 0)} to hit`
+      damageLabel = `${s.name} damage ${formatDiceExpr(s.damage)}${type}`
+    } else if (s.kind === 'save' && s.save) {
+      buttonLabel = `${s.name} ${ABILITY_NAMES[s.save]} save DC ${sc?.saveDc ?? 0}`
+    } else if (s.kind === 'heal' && s.heal) {
+      buttonLabel = `${s.name} heals ${formatDiceExpr(s.heal)}`
+    } else if ((s.kind === 'damage' || s.kind === 'dice') && s.damage) {
+      buttonLabel = `${s.name} ${formatDiceExpr(s.damage)}${s.kind === 'damage' ? type : ''}`
+    }
+    out.push({
+      key: `spell:${index}`,
+      name: s.name,
+      label: s.name,
+      buttonLabel,
+      damageLabel,
+      names: [s.name.toLowerCase(), ...s.aliases],
+      target: { kind: 'spell', index },
+    })
+  })
   return out
 }
 
@@ -117,7 +143,16 @@ export interface Named {
 
 export type NamedMatch<T> = { kind: 'match'; item: T } | { kind: 'ambiguous'; items: T[] } | { kind: 'none' }
 
-export const norm = (s: string): string => s.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim()
+/** Little words that drop out of both the name and what was typed: "Toll the Dead" matches "toll dead". */
+const STOP_WORDS = new Set(['the', 'of'])
+
+export const norm = (s: string): string =>
+  s
+    .toLowerCase()
+    .replace(/[-_]+/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w && !STOP_WORDS.has(w))
+    .join(' ')
 
 /** Exact name or alias beats prefix beats substring. Ties are reported, never guessed. */
 export function matchNamed<T extends Named>(rawQuery: string, pool: T[], aliases: Record<string, string> = {}): NamedMatch<T> {

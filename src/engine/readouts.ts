@@ -13,6 +13,7 @@ import {
   type DerivedAttack,
   type DerivedFeature,
   type DerivedSkill,
+  type DerivedSpell,
   type DerivedToggle,
   type FeatureSection,
   type Proficiency,
@@ -34,24 +35,41 @@ export interface StatusContext {
   wearing: string | null
   /** What is left of each consumable, by name. */
   items: Record<string, number>
-  /** Uses left of each limited feature, by name; a missing entry means full. */
+  /** Uses left of each limited feature, by name (spells under "spell:name"); a missing entry means full. */
   uses: Record<string, number>
   /** Hit dice left; null means full. */
   hitDice: number | null
+  /** Spell slots spent at each level; a missing level means none. */
+  slotsUsed: Record<number, number>
+  pactUsed: number
+  /** The spell being concentrated on, or null. */
+  concentration: string | null
 }
 
 export const NO_HP = 'No hit points on this character yet. Add hitPoints with a max to the character file.'
 export const NO_AC = 'No armor class on this character yet. Add armorClass parts to the character file.'
 export const NO_HIT_DICE = 'No hit dice on this character yet. Add hitDice with a die and a count to the character file.'
 export const NO_FEATURES = 'No feats or abilities on this character yet. Add features to the character file.'
+export const NO_SPELLS = 'No spells on this character yet. Add spells and spellcasting to the character file.'
 export const UNKNOWN_TOPIC =
-  'Try /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /features, /potions, /hp, /status, or the name of a skill, ability, attack, or feature.'
+  'Try /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /features, /spells, /slots, /potions, /hp, /status, or the name of a skill, ability, attack, feature, or spell.'
 
 export const plusWord = (n: number): string => (n < 0 ? `minus ${-n}` : `plus ${n}`)
 
 /** Uses left of a limited feature: what the device remembers, else the full count. */
 export const usesLeft = (f: DerivedFeature, uses: Record<string, number>): number =>
   f.uses ? (uses[f.name] ?? f.uses.max) : 0
+
+/** Free castings left of a spell, kept under "spell:name" so a feature of the same name cannot collide. */
+export const spellUsesLeft = (s: DerivedSpell, uses: Record<string, number>): number =>
+  s.uses ? (uses[`spell:${s.name}`] ?? s.uses.max) : 0
+
+/** Slots left at a level: the file's count minus what this device has spent. */
+export const slotsLeft = (ch: Character, slotsUsed: Record<number, number>, level: number): number =>
+  Math.max(0, (ch.spellcasting?.slots[level] ?? 0) - (slotsUsed[level] ?? 0))
+
+export const pactLeft = (ch: Character, pactUsed: number): number =>
+  Math.max(0, (ch.spellcasting?.pact?.count ?? 0) - pactUsed)
 
 /** Hit dice left: what the device remembers, else the full count; 0 when the character has none. */
 export const hitDiceLeft = (ch: Character, left: number | null): number => (ch.hitDice ? (left ?? ch.hitDice.count) : 0)
@@ -110,6 +128,16 @@ export function answerQuery(topic: string, ch: Character, ctx: StatusContext): s
     case 'hit die':
     case 'hd':
       return describeHitDice(ch, ctx.hitDice)
+    case 'spells':
+    case 's':
+      return describeSpells(ch, ctx)
+    case 'slots':
+    case 'spell slots':
+      return describeSlots(ch, ctx)
+    case 'concentration':
+    case 'concentrating':
+    case 'conc':
+      return ctx.concentration ? `Concentrating on ${ctx.concentration}.` : 'Not concentrating on anything.'
     case 'hp':
     case 'hit points':
     case 'health':
@@ -162,7 +190,7 @@ function topics(ch: Character): Topic[] {
 
 function describeTopic(t: Topic, ch: Character, ctx: StatusContext): string {
   const parts: string[] = []
-  if (t.candidate) parts.push(describeCandidate(t.candidate, ch))
+  if (t.candidate) parts.push(describeCandidate(t.candidate, ch, ctx))
   if (t.feature) {
     parts.push(t.candidate ? describeFeatureTail(t.feature, ctx) : describeFeature(t.feature, ch, ctx))
   } else if (t.toggle) {
@@ -171,9 +199,13 @@ function describeTopic(t: Topic, ch: Character, ctx: StatusContext): string {
   return parts.filter(Boolean).join(' ')
 }
 
-function describeCandidate(c: Candidate, ch: Character): string {
+function describeCandidate(c: Candidate, ch: Character, ctx: StatusContext): string {
   const t = c.target
   switch (t.kind) {
+    case 'spell': {
+      const s = ch.spells[t.index]
+      return s ? describeSpell(s, ch, ctx) : 'That spell is no longer on this character.'
+    }
     case 'ability': {
       const a = ch.abilities[t.ability]
       const save = ch.saves.find((s) => s.ability === t.ability)
@@ -205,6 +237,96 @@ function describeCandidate(c: Candidate, ch: Character): string {
 }
 
 const describeSkill = (s: DerivedSkill): string => `${s.name} ${plusWord(s.modifier)}, ${PROFICIENCY_WORD[s.proficiency]}.`
+
+/** "plus 4 to hit, 2d10 fire", "Wisdom save DC 12", "Dexterity save DC 15, 8d6 fire, half on a success", "heals 1d8+3". */
+export function describeSpellStats(s: DerivedSpell, ch: Character): string {
+  const sc = ch.spellcasting
+  const type = s.damageType ? ` ${s.damageType}` : ''
+  const dice = s.damage ? formatDiceExpr(s.damage) : ''
+  switch (s.kind) {
+    case 'attack':
+      return `${plusWord(sc?.attackBonus ?? 0)} to hit, ${dice}${type}`
+    case 'save': {
+      const save = `${ABILITY_NAMES[s.save ?? 'dex']} save DC ${sc?.saveDc ?? 0}`
+      return s.damage ? `${save}, ${dice}${type}, ${s.saveEffect === 'half' ? 'half' : 'nothing'} on a success` : save
+    }
+    case 'heal':
+      return `heals ${s.heal ? formatDiceExpr(s.heal) : ''}`
+    case 'damage':
+      return `${dice}${type}`
+    case 'dice':
+      return dice
+    case 'utility':
+      return ''
+  }
+}
+
+/** "Fireball: level 3, Dexterity save DC 15, 8d6 fire, half on a success, each level higher adds 1d6. A bright streak..." */
+export function describeSpell(s: DerivedSpell, ch: Character, ctx: StatusContext): string {
+  const bits: string[] = [s.level === 0 ? 'cantrip' : `level ${s.level}`]
+  const stats = describeSpellStats(s, ch)
+  if (stats) bits.push(stats)
+  if (s.upcast) bits.push(`each level higher adds ${formatDiceExpr(s.upcast)}`)
+  if (s.concentration) bits.push(ctx.concentration === s.name ? 'concentrating on it now' : 'concentration')
+  if (s.ritual) bits.push('ritual')
+  if (s.uses) bits.push(`${spellUsesLeft(s, ctx.uses)} of ${s.uses.max} free castings`)
+  if (!s.prepared) bits.push('not prepared')
+  const head = `${s.name}: ${bits.join(', ')}.`
+  return s.description ? `${head} ${s.description}` : head
+}
+
+/** The levels the spells screen shows: cantrips when there are any, then every level with a spell or a slot. */
+export function spellLevels(ch: Character): number[] {
+  const levels = new Set<number>()
+  for (const s of ch.spells) levels.add(s.level)
+  for (const l of Object.keys(ch.spellcasting?.slots ?? {})) levels.add(Number(l))
+  return [...levels].sort((a, b) => a - b)
+}
+
+/** "Cantrips", "Level 1, 3 of 4 slots", or "Level 2" when the slots come from a pact. */
+export function spellLevelHeading(ch: Character, slotsUsed: Record<number, number>, level: number): string {
+  if (level === 0) return 'Cantrips'
+  const max = ch.spellcasting?.slots[level]
+  return max ? `Level ${level}, ${slotsLeft(ch, slotsUsed, level)} of ${max} slots` : `Level ${level}`
+}
+
+/** "Fire Bolt", "Misty Step with 1 of 1 free castings". */
+export function spellEntryText(s: DerivedSpell, ctx: StatusContext): string {
+  return s.uses ? `${s.name} with ${spellUsesLeft(s, ctx.uses)} of ${s.uses.max} free castings` : s.name
+}
+
+/**
+ * Every spell, level by level, as the screen lays it out, with unprepared spells
+ * in a sentence of their own so a list of names stays a list of names:
+ * "Cantrips: Fire Bolt, Mage Hand. Level 1, 3 of 3 slots: Shield, Sleep. Not prepared: Hold Person. Pact slots: 2 of 2 at level 3. Concentrating on Bless."
+ */
+export function describeSpells(ch: Character, ctx: StatusContext): string {
+  if (!ch.spells.length && !ch.spellcasting) return NO_SPELLS
+  const parts: string[] = []
+  for (const level of spellLevels(ch)) {
+    const at = ch.spells.filter((s) => s.level === level)
+    const ready = at.filter((s) => s.prepared).map((s) => spellEntryText(s, ctx))
+    const unprepared = at.filter((s) => !s.prepared).map((s) => s.name)
+    parts.push(`${spellLevelHeading(ch, ctx.slotsUsed, level)}: ${ready.length ? ready.join(', ') : 'none'}.`)
+    if (unprepared.length) parts.push(`Not prepared: ${unprepared.join(', ')}.`)
+  }
+  const pact = ch.spellcasting?.pact
+  if (pact) parts.push(`Pact slots: ${pactLeft(ch, ctx.pactUsed)} of ${pact.count} at level ${pact.level}.`)
+  if (ctx.concentration) parts.push(`Concentrating on ${ctx.concentration}.`)
+  return parts.length ? parts.join(' ') : NO_SPELLS
+}
+
+/** "Level 1 slots: 3 of 4. Level 2 slots: 1 of 2. Pact slots: 2 of 2 at level 3." */
+export function describeSlots(ch: Character, ctx: StatusContext): string {
+  const sc = ch.spellcasting
+  const levels = Object.keys(sc?.slots ?? {})
+    .map(Number)
+    .sort((a, b) => a - b)
+  if (!sc || (!levels.length && !sc.pact)) return 'No spell slots on this character.'
+  const parts = levels.map((l) => `Level ${l} slots: ${slotsLeft(ch, ctx.slotsUsed, l)} of ${sc.slots[l]}.`)
+  if (sc.pact) parts.push(`Pact slots: ${pactLeft(ch, ctx.pactUsed)} of ${sc.pact.count} at level ${sc.pact.level}.`)
+  return parts.join(' ')
+}
 
 /** "advantage to hit, plus 2 damage, plus 3d6 damage, plus 2 armor class": what a toggle does while on. */
 export function describeToggleEffects(t: DerivedToggle): string {
@@ -335,8 +457,16 @@ export function carryingList(ch: Character, items: Record<string, number>): stri
 export function describeEquipped(ch: Character, ctx: StatusContext): string {
   const parts: string[] = []
   const attack = ctx.inHand ? ch.attacks.find((a) => a.name === ctx.inHand) : undefined
-  parts.push(attack ? `${attack.name} in hand: ${describeAttackStats(attack)}.` : 'Nothing in hand.')
-  for (const t of ch.toggles.filter((x) => x.acBonus !== 0)) {
+  const spell = !attack && ctx.inHand ? ch.spells.find((s) => s.name === ctx.inHand) : undefined
+  parts.push(
+    attack
+      ? `${attack.name} in hand: ${describeAttackStats(attack)}.`
+      : spell
+        ? `${spell.name} in hand: ${describeSpellStats(spell, ch)}.`
+        : 'Nothing in hand.',
+  )
+  // Armor class toggles that are gear: a spell's toggle (the Shield spell) is not something carried.
+  for (const t of ch.toggles.filter((x) => x.acBonus !== 0 && !ch.spells.some((s) => s.toggle === x.name))) {
     parts.push(`${t.name} ${ctx.activeToggles.includes(t.name) ? 'on' : 'off'}.`)
   }
   const armor = armorName(ch, ctx.wearing)
@@ -378,10 +508,13 @@ export function describeInventory(ch: Character, ctx: StatusContext): string {
 /** One button of the Feats and abilities screen: a feature (with its toggle, if it has one) or a toggle on its own. */
 export type FeatureEntry = { feature: DerivedFeature; toggle: DerivedToggle | null } | { feature: null; toggle: DerivedToggle }
 
-/** Toggles that are neither a feature nor an inventory item. They are listed under Other so nothing switchable is hidden. */
+/** Toggles that belong to no feature, spell, or inventory item. They are listed under Other so nothing switchable is hidden. */
 export function looseToggles(ch: Character): DerivedToggle[] {
   return ch.toggles.filter(
-    (t) => !ch.features.some((f) => f.toggle === t.name) && !ch.items.some((i) => normName(i.name) === normName(t.name)),
+    (t) =>
+      !ch.features.some((f) => f.toggle === t.name) &&
+      !ch.spells.some((s) => s.toggle === t.name) &&
+      !ch.items.some((i) => normName(i.name) === normName(t.name)),
   )
 }
 
@@ -445,6 +578,7 @@ function describeStatus(ch: Character, ctx: StatusContext): string {
   if (ctx.inHand) parts.push(`${ctx.inHand} in hand.`)
   const on = ch.toggles.filter((t) => ctx.activeToggles.includes(t.name)).map((t) => t.name)
   parts.push(on.length ? `${on.join(' and ')} on.` : 'No toggles on.')
+  if (ctx.concentration) parts.push(`Concentrating on ${ctx.concentration}.`)
   if (ctx.stickyMode !== 'normal') parts.push(`Rolling everything with ${ctx.stickyMode}.`)
   if (ctx.pendingCrit) parts.push(`Critical damage pending for ${ctx.pendingCrit}.`)
   return parts.join(' ')

@@ -38,6 +38,7 @@ import { CharacterDialog } from './ui/CharacterDialog'
 import { FeaturesHud } from './ui/FeaturesHud'
 import { InventoryHud } from './ui/InventoryHud'
 import { LiveRegion } from './ui/LiveRegion'
+import { SpellsHud } from './ui/SpellsHud'
 
 const CHARACTER_KEY = 'clatter.character'
 const SETTINGS_KEY = 'clatter.settings'
@@ -47,6 +48,7 @@ const armorKey = (name: string): string => `clatter.armor.${name}`
 const itemsKey = (name: string): string => `clatter.items.${name}`
 const usesKey = (name: string): string => `clatter.uses.${name}`
 const hitDiceKey = (name: string): string => `clatter.hitdice.${name}`
+const spellsKey = (name: string): string => `clatter.spells.${name}`
 const HISTORY_LIMIT = 100
 const QUICK_DICE = [4, 6, 8, 10, 12, 20, 100]
 
@@ -137,6 +139,28 @@ function initialHitDice(ch: Character): number | null {
   return Number.isInteger(n) && n >= 0 && n <= ch.hitDice.count ? n : ch.hitDice.count
 }
 
+interface SpellState {
+  slotsUsed: Record<number, number>
+  pactUsed: number
+  concentration: string | null
+}
+
+/** Slots spent, pact slots spent, and concentration on this device, trimmed to what the file allows. */
+function initialSpellState(ch: Character): SpellState {
+  const stored = loadJSON<SpellState>(spellsKey(ch.name), { slotsUsed: {}, pactUsed: 0, concentration: null })
+  const slotsUsed: Record<number, number> = {}
+  for (const [k, v] of Object.entries(stored.slotsUsed ?? {})) {
+    const level = Number(k)
+    const max = ch.spellcasting?.slots[level] ?? 0
+    if (Number.isInteger(v) && v > 0 && max > 0) slotsUsed[level] = Math.min(v, max)
+  }
+  const pactMax = ch.spellcasting?.pact?.count ?? 0
+  const pactUsed = Number.isInteger(stored.pactUsed) && stored.pactUsed > 0 ? Math.min(stored.pactUsed, pactMax) : 0
+  const concentration =
+    typeof stored.concentration === 'string' && ch.spells.some((s) => s.name === stored.concentration) ? stored.concentration : null
+  return { slotsUsed, pactUsed, concentration }
+}
+
 /** Visual-only hint under the roll box; never announced, so typing stays quiet. */
 function describeSuggestion(input: string, candidates: Candidate[], ch: Character): string {
   const cmd = parseCommand(input)
@@ -164,9 +188,11 @@ function describeSuggestion(input: string, candidates: Candidate[], ch: Characte
     case 'query':
       return `Enter answers /${cmd.topic}.`
     case 'hud':
-      if (cmd.screen === 'spells') return 'Enter: spells are not built yet.'
+      if (cmd.screen === 'spells') return cmd.open ? 'Enter opens your spells.' : 'Enter reads your spells.'
       if (cmd.screen === 'inventory') return cmd.open ? 'Enter opens the inventory.' : 'Enter reads the inventory.'
       return cmd.open ? 'Enter opens feats and abilities.' : 'Enter reads your feats and abilities.'
+    case 'concentration':
+      return cmd.end ? 'Enter ends concentration.' : 'Enter reads what you are concentrating on.'
     case 'wield':
       return cmd.query ? `Enter wields ${cmd.query}.` : 'Enter says what is in hand.'
     case 'unequip':
@@ -255,9 +281,11 @@ export default function App() {
   const [items, setItems] = useState<Record<string, number>>({})
   const [uses, setUses] = useState<Record<string, number>>({})
   const [hitDice, setHitDice] = useState<number | null>(null)
+  const [spellState, setSpellState] = useState<SpellState>({ slotsUsed: {}, pactUsed: 0, concentration: null })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [hudOpen, setHudOpen] = useState(false)
   const [featsOpen, setFeatsOpen] = useState(false)
+  const [spellsOpen, setSpellsOpen] = useState(false)
   const roller = useRef<RollerState>(initialRollerState())
   const inputRef = useRef<HTMLInputElement>(null)
   const nextId = useRef(1)
@@ -279,6 +307,7 @@ export default function App() {
     const stock = initialItems(character)
     const spent = initialUses(character)
     const dice = initialHitDice(character)
+    const magic = initialSpellState(character)
     roller.current = {
       ...roller.current,
       hp: initialHitPoints(character),
@@ -289,6 +318,10 @@ export default function App() {
       items: stock,
       uses: spent,
       hitDice: dice,
+      slotsUsed: magic.slotsUsed,
+      pactUsed: magic.pactUsed,
+      concentration: magic.concentration,
+      castLevels: {},
       last: null,
       pendingCrit: null,
     }
@@ -298,6 +331,7 @@ export default function App() {
     setItems(stock)
     setUses(spent)
     setHitDice(dice)
+    setSpellState(magic)
   }, [character])
 
   // "/" anywhere outside a text field jumps back to the roll box. Alt+I opens the
@@ -314,6 +348,11 @@ export default function App() {
       if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'a') {
         e.preventDefault()
         setFeatsOpen(true)
+        return
+      }
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        setSpellsOpen(true)
         return
       }
       if (e.key !== '/' || e.ctrlKey || e.altKey || e.metaKey) return
@@ -368,12 +407,19 @@ export default function App() {
     setItems(next.state.items)
     setUses(next.state.uses)
     setHitDice(next.state.hitDice)
+    const magic: SpellState = {
+      slotsUsed: next.state.slotsUsed,
+      pactUsed: next.state.pactUsed,
+      concentration: next.state.concentration,
+    }
+    setSpellState(magic)
     if (next.state.hp) saveJSON(hpKey(character.name), next.state.hp)
     saveString(handKey(character.name), next.state.inHand ?? '')
     saveString(armorKey(character.name), next.state.wearing ?? '')
     saveJSON(itemsKey(character.name), next.state.items)
     saveJSON(usesKey(character.name), next.state.uses)
     saveString(hitDiceKey(character.name), next.state.hitDice === null ? '' : String(next.state.hitDice))
+    saveJSON(spellsKey(character.name), magic)
     if (next.outcome.result) {
       setHistory((h) => [{ id: nextId.current++, text: next.outcome.text }, ...h].slice(0, HISTORY_LIMIT))
     }
@@ -383,9 +429,10 @@ export default function App() {
   function onSubmit(e: FormEvent) {
     e.preventDefault()
     const cmd = parseCommand(input)
-    if (cmd.kind === 'hud' && cmd.open && cmd.screen !== 'spells') {
+    if (cmd.kind === 'hud' && cmd.open) {
       setInput('')
       if (cmd.screen === 'inventory') setHudOpen(true)
+      else if (cmd.screen === 'spells') setSpellsOpen(true)
       else setFeatsOpen(true)
       return
     }
@@ -403,6 +450,25 @@ export default function App() {
       part,
       crit: false,
       toggles: activeToggles,
+      level: null,
+    }
+    finish(performRoll(roller.current, resolved, character, announceOptions))
+  }
+
+  /** A spell pressed in the Spells screen: cast at its own level, with the sticky mode and toggles. */
+  function castFromHud(index: number) {
+    setSpellsOpen(false)
+    const c = candidates.find((x) => x.key === `spell:${index}`)
+    if (!c) return
+    const resolved: Resolved = {
+      kind: 'target',
+      candidate: c,
+      mode: stickyMode,
+      bonus: null,
+      part: null,
+      crit: false,
+      toggles: activeToggles,
+      level: null,
     }
     finish(performRoll(roller.current, resolved, character, announceOptions))
   }
@@ -503,6 +569,9 @@ export default function App() {
           <div className="grid">
             <button type="button" accessKey="i" onClick={() => setHudOpen(true)}>
               Inventory
+            </button>
+            <button type="button" accessKey="s" onClick={() => setSpellsOpen(true)}>
+              Spells
             </button>
             <button type="button" accessKey="a" onClick={() => setFeatsOpen(true)}>
               Feats and abilities
@@ -675,6 +744,14 @@ export default function App() {
               it aloud.
             </li>
             <li>
+              Spells: type /s, press the Spells button, or press Alt+S (Alt+Shift+S in Firefox). One heading per level
+              with the slots left, one button per spell; Enter on a spell casts it, pays for it, and closes. By typing:
+              fire bolt rolls to hit and dmg its damage, charm person reads the save DC and spends a slot, fireball 4
+              casts at level 4, cure wounds rolls healing. /slots reads your slots. concentration reads what you hold;
+              drop lets it go. Damage while concentrating names the Constitution save. The bare word spells reads the
+              screen aloud.
+            </li>
+            <li>
               Gear and items by typing: equip shield and unequip shield, wear chain shirt and doff armor, drink healing
               or use torch, use second wind. /equipped reads what you hold, your armor, your shield, and what you
               carry; /potions reads what is left.
@@ -727,6 +804,16 @@ export default function App() {
         hitDice={hitDice}
         onCancel={() => setFeatsOpen(false)}
         onApply={applyOps}
+      />
+      <SpellsHud
+        open={spellsOpen}
+        character={character}
+        slotsUsed={spellState.slotsUsed}
+        pactUsed={spellState.pactUsed}
+        concentration={spellState.concentration}
+        uses={uses}
+        onCancel={() => setSpellsOpen(false)}
+        onCast={castFromHud}
       />
     </>
   )

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { deriveCharacter, parseCharacterFile } from './character'
 import { freshHitPoints } from './hitpoints'
-import { NO_AC, NO_FEATURES, NO_HIT_DICE, NO_HP, answerQuery, type StatusContext } from './readouts'
+import { NO_AC, NO_FEATURES, NO_HIT_DICE, NO_HP, NO_SPELLS, answerQuery, type StatusContext } from './readouts'
 import { SAMPLE_CHARACTER_JSON } from './sample'
 
 const persi = deriveCharacter({
@@ -41,6 +41,9 @@ const ctx = (over: Partial<StatusContext> = {}): StatusContext => ({
   items: {},
   uses: {},
   hitDice: null,
+  slotsUsed: {},
+  pactUsed: 0,
+  concentration: null,
   ...over,
 })
 
@@ -98,7 +101,16 @@ describe('stats', () => {
   it('ambiguity and unknown topics are said plainly', () => {
     expect(ask('per')).toBe('Ambiguous: Perception, Performance, or Persuasion. Type more letters.')
     expect(ask('xyz')).toBe(
-      'Nothing called xyz. Try /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /features, /potions, /hp, /status, or the name of a skill, ability, attack, or feature.',
+      'Nothing called xyz. Try /ac, /passive, /skills, /saves, /attacks, /equipped, /inventory, /features, /spells, /slots, /potions, /hp, /status, or the name of a skill, ability, attack, feature, or spell.',
+    )
+  })
+
+  it('spells and slots on a character without them', () => {
+    expect(ask('spells')).toBe(NO_SPELLS)
+    expect(ask('slots')).toBe('No spell slots on this character.')
+    expect(ask('concentration')).toBe('Not concentrating on anything.')
+    expect(answerQuery('spells', parseCharacterFile(SAMPLE_CHARACTER_JSON), ctx({ slotsUsed: { 1: 2 }, concentration: 'Charm Person' }))).toBe(
+      'Cantrips: Fire Bolt, Mage Hand, Minor Illusion. Level 1, 1 of 3 slots: Shield, Sleep, Charm Person, Disguise Self. Concentrating on Charm Person.',
     )
   })
 

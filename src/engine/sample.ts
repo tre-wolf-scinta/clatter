@@ -16,7 +16,59 @@ export const SAMPLE_CHARACTER_FILE: CharacterFile = {
     { name: 'Dagger', ability: 'dex', damage: '1d4', damageType: 'piercing' },
   ],
   custom: [{ name: 'Sneak Attack', dice: '3d6', aliases: ['sneak', 'sa'] }],
-  toggles: [{ name: 'Steady Aim', advantage: true, aliases: ['steady'] }],
+  toggles: [
+    { name: 'Steady Aim', advantage: true, aliases: ['steady'] },
+    { name: 'Shield spell', acBonus: 5 },
+  ],
+  spellcasting: { ability: 'int', slots: [3] },
+  spells: [
+    {
+      name: 'Fire Bolt',
+      level: 0,
+      damage: '2d10',
+      damageType: 'fire',
+      description: 'Hurl a mote of fire at a creature or object within 120 feet. A flammable object you hit catches fire.',
+    },
+    {
+      name: 'Mage Hand',
+      level: 0,
+      description:
+        'A spectral hand appears within 30 feet and can carry up to 10 pounds. As an Arcane Trickster it is invisible and can pick locks and pockets.',
+    },
+    {
+      name: 'Minor Illusion',
+      level: 0,
+      description: 'A sound, or an image of an object no larger than a 5-foot cube, within 30 feet for a minute.',
+    },
+    {
+      name: 'Shield',
+      level: 1,
+      toggle: 'Shield spell',
+      description:
+        'Reaction when you are hit: plus 5 to armor class until the start of your next turn, and Magic Missile cannot hit you.',
+    },
+    {
+      name: 'Sleep',
+      level: 1,
+      kind: 'dice',
+      damage: '5d8',
+      upcast: '2d8',
+      description:
+        'Creatures within 20 feet of a point you choose fall asleep, lowest current hit points first, until the total rolled runs out.',
+    },
+    {
+      name: 'Charm Person',
+      level: 1,
+      save: 'wis',
+      description:
+        'A humanoid you can see within 30 feet makes a Wisdom saving throw, with advantage if you or your companions are fighting it. On a failure it is charmed by you for an hour.',
+    },
+    {
+      name: 'Disguise Self',
+      level: 1,
+      description: 'For an hour you look different: clothes, armor, weapons, and body, within a foot of your height.',
+    },
+  ],
   features: [
     {
       name: 'Sneak Attack',

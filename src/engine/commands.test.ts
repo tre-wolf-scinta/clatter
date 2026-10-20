@@ -174,6 +174,19 @@ describe('matchQuery', () => {
     expect(key('bow')).toBe('attack:1')
     expect(key('sneak')).toBe('custom:0')
     expect(key('hide')).toBe('skill:stealth')
+    expect(key('fire')).toBe('spell:0')
+    expect(key('shield')).toBe('spell:3')
+    expect(key('sle')).toBe('ambiguous')
+  })
+
+  it('spells are candidates with labels that say what they do', () => {
+    const labels = pool.map((c) => c.buttonLabel)
+    expect(labels).toContain('Fire Bolt +4 to hit')
+    expect(labels).toContain('Charm Person Wisdom save DC 12')
+    expect(labels).toContain('Sleep 5d8')
+    expect(labels).toContain('Mage Hand')
+    expect(pool.find((c) => c.key === 'spell:0')?.damageLabel).toBe('Fire Bolt damage 2d10 fire')
+    expect(pool.find((c) => c.key === 'spell:1')?.damageLabel).toBeUndefined()
   })
 
   it('reports ambiguity instead of guessing', () => {
@@ -491,11 +504,179 @@ describe('runCommand messages', () => {
     expect(say('/stealth', [0.5]).outcome).toEqual({ text: 'Stealth plus 10, expertise.', result: null })
     expect(say('/skills', [0.5]).outcome.text).toContain('Proficient: Acrobatics plus 7')
     expect(say('/hp', [0.5]).outcome.text).toBe(NO_HP)
-    expect(say('/ac', [0.5]).outcome.text).toBe('Armor class 14: unarmored 10, Dexterity plus 4.')
+    expect(say('/ac', [0.5]).outcome.text).toBe('Armor class 14: unarmored 10, Dexterity plus 4. Shield spell is off.')
     expect(say('/ac', [0.5], { ...initialRollerState(), wearing: 'Leather armor' }).outcome.text).toBe(
-      'Armor class 15: Leather armor 11, Dexterity plus 4.',
+      'Armor class 15: Leather armor 11, Dexterity plus 4. Shield spell is off.',
     )
-    expect(say('/s', [0.5]).outcome.text).toBe('Spells are not built yet.')
+  })
+})
+
+describe('spells', () => {
+  const sampleSpells = 'Cantrips: Fire Bolt, Mage Hand, Minor Illusion. Level 1, 3 of 3 slots: Shield, Sleep, Charm Person, Disguise Self.'
+
+  it('a cantrip attack is two rolls, like a weapon, sets the hand, and Enter repeats it', () => {
+    const hit = say('fire bolt', [0.7])
+    expect(hit.outcome.text).toBe('Fire Bolt: 19 to hit. You rolled a 15 plus 4 from modifiers.')
+    expect(hit.state.inHand).toBe('Fire Bolt')
+    expect(hit.state.history).toHaveLength(0)
+    expect(say('dmg', [0.5, 0.5], hit.state).outcome.text).toBe('Fire Bolt: 12 fire damage. You rolled 6 and 6.')
+    expect(say('', [0.7], hit.state).outcome.text).toBe('Fire Bolt: 19 to hit. You rolled a 15 plus 4 from modifiers.')
+    const crit = say('cast fire bolt', [0.999])
+    expect(crit.outcome.text).toBe('Natural 20! Fire Bolt: 24 to hit. You rolled a 20 plus 4 from modifiers.')
+    expect(say('/d', [0.5, 0.5, 0.5, 0.5], crit.state).outcome.text).toBe('Critical hit! Fire Bolt: 24 fire damage. You rolled 6, 6, 6 and 6.')
+    expect(say('/equipped', [0.5], hit.state).outcome.text).toContain('Fire Bolt in hand: plus 4 to hit, 2d10 fire.')
+  })
+
+  it('a leveled spell pays first, then rolls, and never repeats on Enter', () => {
+    const charm = say('charm person', [0.5])
+    expect(charm.outcome.text).toBe('Charm Person: Wisdom save DC 12. Level 1 slots: 2 of 3 left.')
+    expect(charm.state).toMatchObject({ slotsUsed: { 1: 1 }, last: null })
+    expect(charm.state.history).toHaveLength(1)
+    expect(say('/slots', [0.5], charm.state).outcome.text).toBe('Level 1 slots: 2 of 3.')
+    const sleep = say('sleep', [0.5, 0.5, 0.5, 0.5, 0.5], charm.state)
+    expect(sleep.outcome.text).toBe('Sleep: 25. You rolled 5, 5, 5, 5 and 5. Level 1 slots: 1 of 3 left.')
+    expect(say('sleep 2', [0.5], charm.state).outcome.text).toBe('No level 2 slots left. Long rest to recover.')
+    const shield = say('cast shield', [0.5], sleep.state)
+    expect(shield.outcome.text).toBe('Cast Shield. Level 1 slots: 0 of 3 left. Shield spell on. Armor class 19.')
+    expect(shield.state.activeToggles).toEqual(['Shield spell'])
+    expect(say('shield', [0.5], shield.state).outcome.text).toBe('No level 1 slots left. Long rest to recover.')
+    expect(say('undo', [0.5], shield.state).outcome.text).toBe('Undid the last change. Level 1 slots: 1 of 3. Shield spell off. Armor class 14.')
+    expect(say('long rest', [0.5], shield.state).outcome.text).toBe('Long rest. Spell slots recovered.')
+  })
+
+  it('reads the screen, one spell, and the slots', () => {
+    expect(say('spells', [0.5]).outcome.text).toBe(sampleSpells)
+    expect(say('/s', [0.5]).outcome.text).toBe(sampleSpells)
+    expect(say('/fire bolt', [0.5]).outcome.text).toBe(
+      'Fire Bolt: cantrip, plus 4 to hit, 2d10 fire. Hurl a mote of fire at a creature or object within 120 feet. A flammable object you hit catches fire.',
+    )
+    expect(say('/sleep', [0.5]).outcome.text).toContain('Sleep: level 1, 5d8, each level higher adds 2d8. Creatures within 20 feet')
+    expect(say('/charm person', [0.5]).outcome.text).toContain('Charm Person: level 1, Wisdom save DC 12. A humanoid')
+    expect(say('/mage hand', [0.5]).outcome.text).toContain('Mage Hand: cantrip. A spectral hand')
+    expect(say('sle', [0.5]).outcome.text).toBe('Ambiguous: Sleight of Hand or Sleep. Type more letters.')
+  })
+
+  const cleric = deriveCharacter({
+    level: 5,
+    abilities: { wis: 16, con: 14 },
+    hitPoints: { max: 38 },
+    spellcasting: { ability: 'wis', slots: [4, 3, 2] },
+    spells: [
+      { name: 'Sacred Flame', damage: '2d8', damageType: 'radiant', save: 'dex' },
+      { name: 'Cure Wounds', level: 1, heal: '1d8+3', upcast: '1d8' },
+      { name: 'Bless', level: 1, concentration: true },
+      { name: 'Guiding Bolt', level: 1, damage: '4d6', damageType: 'radiant', upcast: '1d6' },
+      { name: 'Spiritual Weapon', level: 2 },
+      { name: 'Hold Person', level: 2, save: 'wis', concentration: true, prepared: false },
+      { name: 'Misty Step', level: 2, uses: { max: 1, per: 'long rest' } },
+    ],
+  })
+  const withHp = (): RollerState => ({ ...initialRollerState(), hp: freshHitPoints(38) })
+  const run = (input: string, state: RollerState = withHp(), dice: number[] = [0.5]) =>
+    runCommand(input, cleric, state, opts, queueRng(dice))
+
+  it('save, heal, attack, and upcast spells', () => {
+    expect(run('sacred flame', withHp(), [0.5, 0.5]).outcome.text).toBe(
+      'Sacred Flame: 10 radiant damage. Dexterity save DC 14 to avoid it. You rolled 5 and 5.',
+    )
+    const cure = run('cure wounds')
+    expect(cure.outcome.text).toBe('Cure Wounds: heals 8. You rolled a 5 plus 3 from modifiers. Level 1 slots: 3 of 4 left.')
+    expect(cure.state.history).toHaveLength(1)
+    expect(run('cure wounds 3', withHp(), [0.5, 0.5, 0.5]).outcome.text).toBe(
+      'Cure Wounds: heals 18. You rolled 5, 5 and 5, plus 3 from modifiers. Level 3 slots: 1 of 2 left.',
+    )
+    const bolt = run('guiding bolt 2', withHp(), [0.7])
+    expect(bolt.outcome.text).toBe('Guiding Bolt: 21 to hit. You rolled a 15 plus 6 from modifiers. Level 2 slots: 2 of 3 left.')
+    expect(bolt.state.castLevels).toEqual({ 'Guiding Bolt': 2 })
+    const dmg = run('dmg', bolt.state, [0.5, 0.5, 0.5, 0.5, 0.5])
+    expect(dmg.outcome.text).toBe('Guiding Bolt: 20 radiant damage. You rolled 4, 4, 4, 4 and 4.')
+    expect(dmg.state.history).toHaveLength(1)
+    expect(run('guiding bolt 1', withHp(), [0.7]).outcome.text).toBe(
+      'Guiding Bolt: 21 to hit. You rolled a 15 plus 6 from modifiers. Level 1 slots: 3 of 4 left.',
+    )
+  })
+
+  it('concentration is taken up, checked on damage, dropped, undone, and ended by going down', () => {
+    const bless = run('bless')
+    expect(bless.outcome.text).toBe('Cast Bless. Level 1 slots: 3 of 4 left. Concentrating on Bless.')
+    expect(bless.state.concentration).toBe('Bless')
+    expect(run('concentration', bless.state).outcome.text).toBe('Concentrating on Bless.')
+    expect(run('/status', bless.state).outcome.text).toBe('38 of 38 hit points. No toggles on. Concentrating on Bless.')
+    expect(run('-7', bless.state).outcome.text).toBe('Took 7. 31 of 38 hit points. Constitution save DC 10 to keep Bless.')
+    expect(run('-24', bless.state).outcome.text).toBe('Took 24. 14 of 38 hit points. Constitution save DC 12 to keep Bless.')
+    expect(run('hold person', bless.state).outcome.text).toBe('Hold Person is not prepared.')
+    expect(run('undo', bless.state).outcome.text).toBe('Undid the last change. 38 of 38 hit points. Level 1 slots: 4 of 4. Concentration ended.')
+    const dropped = run('drop', bless.state)
+    expect(dropped.outcome.text).toBe('Bless ends.')
+    expect(dropped.state.concentration).toBeNull()
+    expect(run('undo', dropped.state).outcome.text).toBe('Undid the last change. 38 of 38 hit points. Concentrating on Bless.')
+    const down = run('-38', bless.state)
+    expect(down.outcome.text).toBe('Took 38. 0 of 38 hit points. You are down. Bless ends.')
+    expect(down.state.concentration).toBeNull()
+    expect(run('drop').outcome.text).toBe('Not concentrating on anything.')
+    expect(run('long rest', bless.state).outcome.text).toBe('Long rest. 38 of 38 hit points. Spell slots recovered. Bless ends.')
+  })
+
+  it('free castings, the hint for a higher slot, and the listing with unprepared spells', () => {
+    const step = run('misty step')
+    expect(step.outcome.text).toBe('Cast Misty Step. 0 free castings left.')
+    expect(run('misty step', step.state).outcome.text).toBe('Cast Misty Step. Level 2 slots: 2 of 3 left.')
+    let s = withHp()
+    for (let i = 0; i < 4; i++) s = run('cure wounds', s).state
+    expect(run('cure wounds', s).outcome.text).toBe('No level 1 slots left. Level 2 slots: 3 left. Type cure wounds 2 to use one.')
+    expect(run('spells', s).outcome.text).toBe(
+      'Cantrips: Sacred Flame. Level 1, 0 of 4 slots: Cure Wounds, Bless, Guiding Bolt. Level 2, 3 of 3 slots: Spiritual Weapon, Misty Step with 1 of 1 free castings. Not prepared: Hold Person. Level 3, 2 of 2 slots: none.',
+    )
+    expect(run('/hold person').outcome.text).toBe('Hold Person: level 2, Wisdom save DC 14, concentration, not prepared.')
+  })
+
+  it('ending concentration switches off the toggle the spell kept on', () => {
+    const wizard = deriveCharacter({
+      level: 5,
+      abilities: { int: 16, dex: 10 },
+      toggles: [{ name: 'Haste spell', acBonus: 2 }],
+      spellcasting: { ability: 'int', slots: [4, 3, 2] },
+      spells: [
+        { name: 'Haste', level: 3, toggle: 'Haste spell', concentration: true },
+        { name: 'Hold Person', level: 2, save: 'wis', concentration: true },
+      ],
+      armorClass: { parts: [{ name: 'unarmored', value: 10 }] },
+    })
+    const w = (input: string, state: RollerState = initialRollerState()) => runCommand(input, wizard, state, opts, queueRng([0.5]))
+    const haste = w('haste')
+    expect(haste.outcome.text).toBe('Cast Haste. Level 3 slots: 1 of 2 left. Haste spell on. Armor class 12. Concentrating on Haste.')
+    expect(w('drop', haste.state).outcome.text).toBe('Haste ends. Haste spell off. Armor class 10.')
+    expect(w('drop', haste.state).state.activeToggles).toEqual([])
+    expect(w('hold person', haste.state).outcome.text).toBe(
+      'Hold Person: Wisdom save DC 14. Level 2 slots: 2 of 3 left. Concentrating on Hold Person. Haste ends. Haste spell off. Armor class 10.',
+    )
+    expect(w('undo', w('drop', haste.state).state).outcome.text).toBe('Undid the last change. Concentrating on Haste. Haste spell on. Armor class 12.')
+  })
+
+  it('pact slots pay for warlock spells and come back on a short rest', () => {
+    const warlock = deriveCharacter({
+      level: 5,
+      abilities: { cha: 16 },
+      spellcasting: { ability: 'cha', pact: { level: 3, count: 2 } },
+      spells: [
+        { name: 'Eldritch Blast', damage: '1d10', damageType: 'force' },
+        { name: 'Hex', level: 1, concentration: true },
+        { name: 'Fireball', level: 3, damage: '8d6', damageType: 'fire', save: 'dex', upcast: '1d6' },
+      ],
+    })
+    const w = (input: string, state: RollerState = initialRollerState(), dice: number[] = [0.5]) =>
+      runCommand(input, warlock, state, opts, queueRng(dice))
+    const hex = w('hex')
+    expect(hex.outcome.text).toBe('Cast Hex. Pact slots: 1 of 2 left. Concentrating on Hex.')
+    const fire = w('fireball', hex.state, Array<number>(8).fill(0.5))
+    expect(fire.outcome.text).toBe(
+      'Fireball: 32 fire damage. Dexterity save DC 14 for half. You rolled 4, 4, 4, 4, 4, 4, 4 and 4. Pact slots: 0 of 2 left.',
+    )
+    expect(w('fireball', fire.state).outcome.text).toBe('No level 3 slots left. Short rest to recover.')
+    expect(w('fireball 4', hex.state).outcome.text).toBe('No level 4 slots left. Short rest to recover.')
+    expect(w('/slots', fire.state).outcome.text).toBe('Pact slots: 0 of 2 at level 3.')
+    expect(w('short rest', fire.state).outcome.text).toBe('Short rest. Pact slots recovered.')
+    expect(w('undo', hex.state).outcome.text).toBe('Undid the last change. Pact slots: 2 of 2. Concentration ended.')
   })
 })
 

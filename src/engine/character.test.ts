@@ -332,3 +332,70 @@ describe('features and hit dice', () => {
     expectError('{"hitDice":{"die":"d12","count":0}}', /hitDice.count: expected a whole number of 1 or more/)
   })
 })
+
+describe('spells', () => {
+  const expectError = (text: string, pattern: RegExp) => expect(() => parseCharacterFile(text)).toThrowError(pattern)
+
+  it('derives the spellcasting numbers, the slots, and what each spell does', () => {
+    const ch = deriveCharacter({
+      level: 5,
+      abilities: { int: 16 },
+      spellcasting: { ability: 'int', slots: { '1': 4, 'level 2': 3 } },
+      spells: [
+        { name: 'Fire Bolt', damage: '2d10', damageType: 'fire' },
+        { name: 'Acid Splash', damage: '2d6', damageType: 'acid', save: 'dex' },
+        { name: 'Fireball', level: 3, damage: '8d6', damageType: 'fire', save: 'dex', upcast: '1d6' },
+        { name: 'Cure Wounds', level: 1, heal: '1d8+3' },
+        { name: 'Magic Missile', level: 1, kind: 'damage', damage: '3d4+3', damageType: 'force' },
+        { name: 'Sleep', level: 1, kind: 'dice', damage: '5d8' },
+        { name: 'Mage Hand', aliases: ['Hand'] },
+        { name: 'Misty Step', level: 2, uses: { max: 1 }, prepared: false, ritual: true, concentration: true },
+      ],
+    })
+    expect(ch.spellcasting).toEqual({ ability: 'int', saveDc: 14, attackBonus: 6, slots: { 1: 4, 2: 3 }, pact: null })
+    expect(ch.spells.map((s) => [s.name, s.level, s.kind, s.saveEffect])).toEqual([
+      ['Fire Bolt', 0, 'attack', 'none'],
+      ['Acid Splash', 0, 'save', 'none'],
+      ['Fireball', 3, 'save', 'half'],
+      ['Cure Wounds', 1, 'heal', 'half'],
+      ['Magic Missile', 1, 'damage', 'half'],
+      ['Sleep', 1, 'dice', 'half'],
+      ['Mage Hand', 0, 'utility', 'none'],
+      ['Misty Step', 2, 'utility', 'half'],
+    ])
+    expect(ch.spells[2].upcast).toEqual({ terms: [{ sign: 1, count: 1, sides: 6 }], flat: 0 })
+    expect(ch.spells[6].aliases).toEqual(['hand'])
+    expect(ch.spells[7]).toMatchObject({ uses: { max: 1, per: 'long rest' }, prepared: false, ritual: true, concentration: true })
+    expect(deriveCharacter({ spellcasting: { saveDc: 15, attackBonus: 7, slots: [2, 0], pact: { level: 1, count: 1 } } }).spellcasting).toEqual({
+      ability: null,
+      saveDc: 15,
+      attackBonus: 7,
+      slots: { 1: 2 },
+      pact: { level: 1, count: 1 },
+    })
+    expect(deriveCharacter({ spellcasting: { ability: 'wis', spells: [{ name: 'Guidance' }] } }).spells).toHaveLength(1)
+    expect(deriveCharacter({}).spellcasting).toBeNull()
+    expect(deriveCharacter({}).spells).toEqual([])
+  })
+
+  it('rejects bad spells and spellcasting', () => {
+    expectError('{"spells":[{"level":1}]}', /spells\[1\]: every spell needs a name/)
+    expectError('{"spells":[{"name":"X","level":10}]}', /X.*level must be 0 for a cantrip or 1 to 9/)
+    expectError('{"spells":[{"name":"X","kind":"blast"}]}', /X.*kind must be one of attack, save, heal, damage, dice, utility/)
+    expectError('{"spells":[{"name":"X","kind":"save"}]}', /X.*a save spell needs the ability the target saves with/)
+    expectError('{"spells":[{"name":"X","kind":"attack"}]}', /X.*attack spells need damage dice/)
+    expectError('{"spells":[{"name":"X","kind":"heal"}]}', /X.*a heal spell needs heal dice/)
+    expectError('{"spells":[{"name":"X","damage":"2d10"}]}', /X.*a spell attack needs spellcasting.ability/)
+    expectError('{"spells":[{"name":"X","save":"dex"}]}', /X.*a save spell needs spellcasting.ability/)
+    expectError('{"spellcasting":{"ability":"int"},"spells":[{"name":"X","save":"luck"}]}', /unknown ability "luck"/)
+    expectError(
+      '{"spellcasting":{"ability":"int"},"spells":[{"name":"X","level":1,"save":"dex","saveEffect":"double"}]}',
+      /saveEffect must be "half" or "none"/,
+    )
+    expectError('{"spellcasting":{"slots":[4,-1]}}', /spellcasting.slots.2: expected a whole number/)
+    expectError('{"spellcasting":{"slots":{"ten":1}}}', /"ten" is not a spell level from 1 to 9/)
+    expectError('{"spellcasting":{"pact":{"level":3}}}', /spellcasting.pact.count/)
+    expectError('{"spells":[{"name":"Shield","toggle":"Shield spell"}]}', /toggle "Shield spell" is not one of this character's toggles/)
+    expectError('{"spells":[{"name":"A"},{"name":"a"}]}', /two spells called "a"/)
+  })
+})

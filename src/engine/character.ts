@@ -83,6 +83,20 @@ export const FEATURE_SECTION_NAMES: Record<FeatureSection, string> = {
 /** When limited uses come back. */
 export type RestKind = 'short rest' | 'long rest'
 
+export interface LimitedUses {
+  max: number
+  per: RestKind
+}
+
+/**
+ * What casting a spell does: a spell attack then damage (attack), a save
+ * against the DC with optional damage (save), healing dice (heal), damage
+ * that just hits (damage), dice with no damage type (dice: Sleep), or nothing
+ * to roll (utility).
+ */
+export type SpellKind = 'attack' | 'save' | 'heal' | 'damage' | 'dice' | 'utility'
+export const SPELL_KINDS: readonly SpellKind[] = ['attack', 'save', 'heal', 'damage', 'dice', 'utility']
+
 /**
  * The JSON a player writes or imports. Everything is optional and forgiving:
  * names are case-insensitive, "Sleight of Hand" / "sleight_of_hand" / "soh" all work,
@@ -125,6 +139,9 @@ export interface CharacterFile {
   inventory?: ItemFile[]
   /** Class features, species traits, and feats: what they do and how many uses they have. */
   features?: FeatureFile[]
+  /** The spellcasting ability, slots, and pact magic. Spells can live here or at the top level. */
+  spellcasting?: SpellcastingFile
+  spells?: SpellFile[]
   /** Maximum hit points. Current hit points are tracked in the app, per device. */
   hitPoints?: { max: number }
   /** Hit dice for short rests: { "die": "d12", "count": 5 }. Count defaults to the level. */
@@ -243,6 +260,52 @@ export interface HitDiceFile {
   count?: number
 }
 
+export interface SpellcastingFile {
+  /** Ability behind the save DC and spell attack: int, wis, cha. */
+  ability?: string
+  /** Replace the derived numbers when copying from a sheet. */
+  saveDc?: number
+  attackBonus?: number
+  /** Slots by level: [4, 3, 2] (levels 1, 2, 3) or { "1": 4, "2": 3 }. */
+  slots?: Record<string, number> | number[]
+  /** Warlock pact slots, back on a short rest: { "level": 3, "count": 2 }. */
+  pact?: { level: number; count: number }
+  spells?: SpellFile[]
+}
+
+export interface SpellFile {
+  name: string
+  /** 0 for a cantrip. Default 0. */
+  level?: number
+  /**
+   * attack, save, heal, damage, dice, or utility. Default: save when there is a
+   * save ability, else attack when there are damage dice, else heal when there
+   * are heal dice, else utility.
+   */
+  kind?: string
+  /** Damage dice at the spell's level (cantrips: at the character's level), like "2d10". */
+  damage?: string
+  damageType?: string
+  /** Ability the target saves with: dex, wis. */
+  save?: string
+  /** "half" when a successful save halves the damage (the default for leveled spells), "none" for no damage (the default for cantrips). */
+  saveEffect?: string
+  /** Healing dice with the modifier written in, like "1d8+3". */
+  heal?: string
+  /** Extra dice for each slot level above the spell's: "1d6" for Fireball, "1d8" for Cure Wounds. */
+  upcast?: string
+  /** A toggle switched on when cast, by name: the Shield spell, Bless. */
+  toggle?: string
+  concentration?: boolean
+  ritual?: boolean
+  description?: string
+  aliases?: string[]
+  /** Default true. An unprepared spell is listed but cannot be cast. */
+  prepared?: boolean
+  /** Free castings that need no slot: { "max": 1, "per": "long rest" } for a racial spell or Magic Initiate. */
+  uses?: { max: number; per?: string }
+}
+
 export interface ArmorClassPart {
   name: string
   value: number
@@ -341,7 +404,7 @@ export interface DerivedFeature {
   description: string | null
   aliases: string[]
   /** Limited uses per rest; null when it can be used at will or is always on. */
-  uses: { max: number; per: RestKind } | null
+  uses: LimitedUses | null
   /** The toggle this feature switches, by name; null when it is not a toggle. */
   toggle: string | null
   /** Healing when used. */
@@ -351,6 +414,38 @@ export interface DerivedFeature {
 export interface DerivedHitDice {
   sides: number
   count: number
+}
+
+export interface DerivedSpell {
+  name: string
+  /** 0 for a cantrip. */
+  level: number
+  kind: SpellKind
+  damage: DiceExpr | null
+  damageType?: string
+  save: Ability | null
+  saveEffect: 'half' | 'none'
+  heal: DiceExpr | null
+  /** Extra dice per slot level above the spell's. */
+  upcast: DiceExpr | null
+  toggle: string | null
+  concentration: boolean
+  ritual: boolean
+  description: string | null
+  aliases: string[]
+  prepared: boolean
+  /** Free castings per rest; null when every casting takes a slot (or none, for a cantrip). */
+  uses: LimitedUses | null
+}
+
+export interface DerivedSpellcasting {
+  ability: Ability | null
+  /** Null when the file gives neither an ability nor the number. */
+  saveDc: number | null
+  attackBonus: number | null
+  /** Slots by level 1 to 9; a level with no slots is absent. */
+  slots: Record<number, number>
+  pact: { level: number; count: number } | null
 }
 
 /** True when the toggle changes attack rolls or damage (as opposed to only armor class). */
@@ -374,6 +469,10 @@ export interface Character {
   items: DerivedItem[]
   /** Class features, species traits, feats, in file order. */
   features: DerivedFeature[]
+  /** Spells in file order; cantrips are level 0. */
+  spells: DerivedSpell[]
+  /** Null when the file has no spellcasting block and no spells. */
+  spellcasting: DerivedSpellcasting | null
   /** Null when the file gives no hit points. */
   hitPointsMax: number | null
   /** Null when the file gives no hit dice. */
@@ -510,6 +609,28 @@ function optionalDice(raw: unknown, context: string, field: string, example: str
   const dice = parseDiceExpr(String(raw))
   if (!dice) throw new CharacterError(`${context}: ${field} must be dice like ${example}.`)
   return dice
+}
+
+/** Parses { "max": 3, "per": "long rest" }; the error names the feature or spell. */
+function parseUses(raw: unknown, context: string, ctx: string): LimitedUses | null {
+  if (raw === undefined || raw === null) return null
+  if (typeof raw !== 'object') throw new CharacterError(`${ctx}: uses must look like { "max": 3, "per": "long rest" }.`)
+  const u = raw as { max?: unknown; per?: unknown }
+  const max = numberOr(u.max, NaN, `${context}.uses.max`)
+  if (!Number.isInteger(max) || max < 1) throw new CharacterError(`${ctx}: uses.max must be a whole number of 1 or more.`)
+  const perRaw = u.per === undefined || u.per === null ? 'long rest' : normName(String(u.per))
+  const per = REST_WORDS[perRaw]
+  if (!per) throw new CharacterError(`${ctx}: uses.per must be "long rest" or "short rest".`)
+  return { max, per }
+}
+
+/** A toggle named in a feature or spell, by name or alias; the error names the owner. */
+function findToggle(raw: unknown, toggles: DerivedToggle[], ctx: string): string | null {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return null
+  const wanted = normName(String(raw))
+  const found = toggles.find((t) => normName(t.name) === wanted || t.aliases.includes(wanted))
+  if (!found) throw new CharacterError(`${ctx}: toggle "${String(raw)}" is not one of this character's toggles.`)
+  return found.name
 }
 
 function acParts(raw: unknown, context: string): ArmorClassPart[] {
@@ -775,28 +896,9 @@ export function deriveCharacter(file: CharacterFile): Character {
     const sectionRaw = f.section === undefined || f.section === null ? 'class' : normName(String(f.section))
     const section = SECTION_WORDS[sectionRaw]
     if (!section) throw new CharacterError(`${ctx}: section must be one of ${FEATURE_SECTIONS.join(', ')}.`)
-    let uses: DerivedFeature['uses'] = null
-    if (f.uses !== undefined && f.uses !== null) {
-      if (typeof f.uses !== 'object') {
-        throw new CharacterError(`${ctx}: uses must look like { "max": 3, "per": "long rest" }.`)
-      }
-      const max = numberOr(f.uses.max, NaN, `${context}.uses.max`)
-      if (!Number.isInteger(max) || max < 1) throw new CharacterError(`${ctx}: uses.max must be a whole number of 1 or more.`)
-      const perRaw = f.uses.per === undefined || f.uses.per === null ? 'long rest' : normName(String(f.uses.per))
-      const per = REST_WORDS[perRaw]
-      if (!per) throw new CharacterError(`${ctx}: uses.per must be "long rest" or "short rest".`)
-      uses = { max, per }
-    }
+    const uses = parseUses(f.uses, context, ctx)
     const heal = optionalDice(f.heal, ctx, 'heal', '1d10+5')
-    let toggle: string | null = null
-    if (f.toggle !== undefined && f.toggle !== null && String(f.toggle).trim() !== '') {
-      const wanted = normName(String(f.toggle))
-      const found = toggles.find((t) => normName(t.name) === wanted || t.aliases.includes(wanted))
-      if (!found) throw new CharacterError(`${ctx}: toggle "${f.toggle}" is not one of this character's toggles.`)
-      toggle = found.name
-    } else {
-      toggle = toggles.find((t) => normName(t.name) === normName(name))?.name ?? null
-    }
+    const toggle = findToggle(f.toggle, toggles, ctx) ?? toggles.find((t) => normName(t.name) === normName(name))?.name ?? null
     if (toggle && heal) throw new CharacterError(`${ctx}: a feature cannot both heal and switch a toggle.`)
     const description = typeof f.description === 'string' && f.description.trim() ? f.description.trim() : null
     return { name, section, description, aliases: stringList(f.aliases, `${context}.aliases`).map(normName), uses, toggle, heal }
@@ -823,6 +925,111 @@ export function deriveCharacter(file: CharacterFile): Character {
     const count = numberOr(file.hitDice.count, level, 'hitDice.count')
     if (!Number.isInteger(count) || count < 1) throw new CharacterError('hitDice.count: expected a whole number of 1 or more.')
     hitDice = { sides, count }
+  }
+
+  // Spellcasting: the ability behind the save DC and spell attack, the slots, the pact, and the spells.
+  const sf = file.spellcasting
+  if (sf !== undefined && sf !== null && typeof sf !== 'object') {
+    throw new CharacterError('spellcasting: expected an object like { "ability": "int", "slots": [4, 2] }.')
+  }
+  const spellFiles: SpellFile[] = [...(sf?.spells ?? []), ...(file.spells ?? [])]
+  let spellcasting: DerivedSpellcasting | null = null
+  if ((sf !== undefined && sf !== null) || spellFiles.length) {
+    const ability = sf?.ability !== undefined && sf?.ability !== null ? toAbility(String(sf.ability), 'spellcasting.ability') : null
+    const mod = ability ? abilities[ability].modifier : null
+    const given = (v: unknown) => v !== undefined && v !== null
+    const saveDc = given(sf?.saveDc) ? numberOr(sf?.saveDc, 0, 'spellcasting.saveDc') : mod === null ? null : 8 + prof + mod
+    const attackBonus = given(sf?.attackBonus) ? numberOr(sf?.attackBonus, 0, 'spellcasting.attackBonus') : mod === null ? null : prof + mod
+    const slots: Record<number, number> = {}
+    const rawSlots = sf?.slots
+    if (given(rawSlots)) {
+      if (typeof rawSlots !== 'object') {
+        throw new CharacterError('spellcasting.slots: expected a list like [4, 3, 2] or an object like { "1": 4, "2": 3 }.')
+      }
+      const entries: [string, unknown][] = Array.isArray(rawSlots)
+        ? rawSlots.map((v, i) => [String(i + 1), v])
+        : Object.entries(rawSlots as Record<string, unknown>)
+      for (const [k, v] of entries) {
+        const lvl = Number(String(k).replace(/^level\s*/i, ''))
+        if (!Number.isInteger(lvl) || lvl < 1 || lvl > 9) throw new CharacterError(`spellcasting.slots: "${k}" is not a spell level from 1 to 9.`)
+        const n = numberOr(v, 0, `spellcasting.slots.${k}`)
+        if (!Number.isInteger(n) || n < 0) throw new CharacterError(`spellcasting.slots.${k}: expected a whole number.`)
+        if (n > 0) slots[lvl] = n
+      }
+    }
+    let pact: DerivedSpellcasting['pact'] = null
+    if (given(sf?.pact)) {
+      const p = sf?.pact as { level?: unknown; count?: unknown }
+      const level = numberOr(p.level, NaN, 'spellcasting.pact.level')
+      const count = numberOr(p.count, NaN, 'spellcasting.pact.count')
+      if (!Number.isInteger(level) || level < 1 || level > 9) throw new CharacterError('spellcasting.pact.level: expected a spell level from 1 to 9.')
+      if (!Number.isInteger(count) || count < 1) throw new CharacterError('spellcasting.pact.count: expected a whole number of 1 or more.')
+      pact = { level, count }
+    }
+    spellcasting = { ability, saveDc, attackBonus, slots, pact }
+  }
+  const spells: DerivedSpell[] = spellFiles.map((s, i) => {
+    const context = `spells[${i + 1}]`
+    const name = requireName(s, context, 'spell')
+    const ctx = `${context} (${name})`
+    const level = numberOr(s.level, 0, `${context}.level`)
+    if (!Number.isInteger(level) || level < 0 || level > 9) throw new CharacterError(`${ctx}: level must be 0 for a cantrip or 1 to 9.`)
+    const damage = optionalDice(s.damage, ctx, 'damage', '2d10')
+    if (damage && damage.terms.length === 0) throw new CharacterError(`${ctx}: damage must be dice like 2d10.`)
+    const heal = optionalDice(s.heal, ctx, 'heal', '1d8+3')
+    const upcast = optionalDice(s.upcast, ctx, 'upcast', '1d6')
+    const save = s.save !== undefined && s.save !== null && String(s.save).trim() !== '' ? toAbility(String(s.save), ctx) : null
+    const kindRaw =
+      s.kind === undefined || s.kind === null
+        ? save
+          ? 'save'
+          : damage
+            ? 'attack'
+            : heal
+              ? 'heal'
+              : 'utility'
+        : String(s.kind).trim().toLowerCase()
+    const kind = SPELL_KINDS.find((k) => k === kindRaw)
+    if (!kind) throw new CharacterError(`${ctx}: kind must be one of ${SPELL_KINDS.join(', ')}.`)
+    if (kind === 'save' && !save) throw new CharacterError(`${ctx}: a save spell needs the ability the target saves with, like "save": "dex".`)
+    if ((kind === 'attack' || kind === 'damage' || kind === 'dice') && !damage) {
+      throw new CharacterError(`${ctx}: ${kind} spells need damage dice, like "damage": "2d10".`)
+    }
+    if (kind === 'heal' && !heal) throw new CharacterError(`${ctx}: a heal spell needs heal dice, like "heal": "1d8+3".`)
+    if (kind === 'attack' && spellcasting?.attackBonus === null) {
+      throw new CharacterError(`${ctx}: a spell attack needs spellcasting.ability (or spellcasting.attackBonus).`)
+    }
+    if (kind === 'save' && spellcasting?.saveDc === null) {
+      throw new CharacterError(`${ctx}: a save spell needs spellcasting.ability (or spellcasting.saveDc).`)
+    }
+    const effectRaw =
+      s.saveEffect === undefined || s.saveEffect === null ? (level > 0 ? 'half' : 'none') : String(s.saveEffect).trim().toLowerCase()
+    if (effectRaw !== 'half' && effectRaw !== 'none') throw new CharacterError(`${ctx}: saveEffect must be "half" or "none".`)
+    const description = typeof s.description === 'string' && s.description.trim() ? s.description.trim() : null
+    return {
+      name,
+      level,
+      kind,
+      damage,
+      damageType: typeof s.damageType === 'string' && s.damageType.trim() ? s.damageType.trim() : undefined,
+      save,
+      saveEffect: effectRaw,
+      heal,
+      upcast,
+      toggle: findToggle(s.toggle, toggles, ctx),
+      concentration: s.concentration === true,
+      ritual: s.ritual === true,
+      description,
+      aliases: stringList(s.aliases, `${context}.aliases`).map(normName),
+      prepared: s.prepared !== false,
+      uses: parseUses(s.uses, context, ctx),
+    }
+  })
+  const spellNames = new Set<string>()
+  for (const s of spells) {
+    const key = normName(s.name)
+    if (spellNames.has(key)) throw new CharacterError(`spells: there are two spells called "${s.name}".`)
+    spellNames.add(key)
   }
 
   const aliases: Record<string, string> = {}
@@ -861,6 +1068,8 @@ export function deriveCharacter(file: CharacterFile): Character {
     consumables,
     items,
     features,
+    spells,
+    spellcasting,
     hitPointsMax,
     hitDice,
     armorClass,
