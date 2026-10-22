@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Clatter bridge",
+  "version": "0.1.0",
+  "description": "Sends each roll Clatter announces to your open Roll20 game as a chat card.",
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://clatter.onrender.com/*",
+        "https://tre-wolf-scinta.github.io/clatter/*",
+        "http://localhost:5173/*",
+        "http://localhost:5174/*"
+      ],
+      "js": ["clatter.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://app.roll20.net/editor/*"],
+      "js": ["roll20.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": ["https://app.roll20.net/editor/*"]
+}

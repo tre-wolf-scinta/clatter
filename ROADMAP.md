@@ -2,18 +2,15 @@
 
 What is agreed but not built, in the order it is likely to happen. Each entry records the design decisions already made, so building it later starts from the owner's intent rather than from scratch. Built features move out of here and into README.md.
 
-## Next: the Roll20 bridge, a Chrome extension
+## The Roll20 bridge: what is left
 
-Decided 2026-10-22. The owner plays on Roll20 with Beyond20 in Chrome and wants each result in Roll20's chat the moment it is announced, without leaving Clatter. Copy and paste was offered and declined for their own use; it may come later for other players.
+The extension shipped on 2026-10-22 (see README, "Roll20"). Still to come, when the owner asks:
 
-- A small Manifest V3 extension in an `extension/` folder of this repo, no bundler, plain JavaScript. Permissions only for Clatter's two addresses, localhost for development, and `app.roll20.net`.
-- Clatter posts each result to the page with `window.postMessage`; the extension's content script on the Clatter tab relays it to the service worker, which finds the open Roll20 game tab and hands it to the content script there. That script types a message into Roll20's chat box and presses send, which is how Beyond20 does it. Roll20 needs no account change, no API, no Pro subscription.
-- The message is a Roll20 template so sighted players see a card: the character's name, what was rolled, the total, the breakdown. Pre-rolled numbers are the norm at Beyond20 tables already.
-- Clatter announces the bridge's state once when it connects ("Roll20 bridge connected"), never per roll, and a Settings checkbox turns sending off.
-- A second mode, later if the table wants it: send the formula instead and let Roll20 roll, with the content script reading the result back from the chat log into Clatter's live region, so the DM sees Roll20's own dice.
-- Testing: Playwright can launch Chromium with the unpacked extension and a local page that mimics Roll20's chat box and send button. The real Roll20 chat markup is checked against a live game when building, since Roll20 changes it now and then; that is the maintenance risk of this route.
-- Installing for the owner: load the folder unpacked with Developer mode on in `chrome://extensions`. Publishing to the Chrome Web Store, unlisted, is optional and only needed to share it with other players without the developer-mode step; it costs a one-time registration fee and a review of a few days.
-- Foundry later with a content script for its page or a tiny module (Foundry has a proper chat API), Discord later with a webhook address pasted into Settings.
+- Let Roll20 roll: send the formula instead of the result and read Roll20's own dice back into Clatter's live region, so the DM sees Roll20's dice. The markup to read is known from the live tabletop: a `div.message.rollresult` holds `.formula` ("rolling 1d20+5"), one `.diceroll.d20` per die with the face, and `.rolled` with the total.
+- Speak as the character: Roll20's "As" dropdown next to the chat box can post the card under a character's name once that character exists in the game.
+- Publish to the Chrome Web Store, unlisted, so other players skip the developer-mode step. One-time registration fee and a review of a few days.
+- Foundry with a content script for its page or a tiny module (Foundry has a proper chat API), Discord with a webhook address pasted into Settings.
+- A one-time Roll20 nuisance to watch for: Chrome may show a "Disable developer mode extensions" bubble at launch while the extension is loaded unpacked.
 
 ## Dice fairness HUD
 

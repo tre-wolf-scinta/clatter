@@ -9,6 +9,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from 'react'
+import { BRIDGE_VERSION, isBridgeReply, roll20Message, type BridgeHello, type BridgeRollMessage } from './bridge'
 import { CharacterError, parseCharacterFile, type Character, type DerivedToggle } from './engine/character'
 import {
   allCandidates,
@@ -25,6 +26,7 @@ import {
   type AttackPart,
   type BatchOp,
   type Candidate,
+  type Outcome,
   type Resolved,
   type RollerState,
 } from './engine/commands'
@@ -56,8 +58,10 @@ interface Settings {
   breakdown: boolean
   assertive: boolean
   proficientOnly: boolean
+  /** Post each roll and cast to the open Roll20 game through the bridge extension. */
+  sendToVtt: boolean
 }
-const DEFAULT_SETTINGS: Settings = { breakdown: true, assertive: true, proficientOnly: false }
+const DEFAULT_SETTINGS: Settings = { breakdown: true, assertive: true, proficientOnly: false, sendToVtt: true }
 
 interface HistoryEntry {
   id: number
@@ -286,6 +290,9 @@ export default function App() {
   const [hudOpen, setHudOpen] = useState(false)
   const [featsOpen, setFeatsOpen] = useState(false)
   const [spellsOpen, setSpellsOpen] = useState(false)
+  const [bridge, setBridge] = useState<'absent' | 'present'>('absent')
+  const bridgeSeen = useRef(false)
+  const bridgeWarned = useRef(false)
   const roller = useRef<RollerState>(initialRollerState())
   const inputRef = useRef<HTMLInputElement>(null)
   const nextId = useRef(1)
@@ -369,6 +376,39 @@ export default function App() {
     setAnnouncement((a) => ({ text, nonce: a.nonce + 1 }))
   }, [])
 
+  // The Clatter bridge extension, when installed, answers hello and reports each
+  // delivery. A failure is announced once per session, and only after a pause,
+  // so it never cuts off the roll the player is still hearing.
+  useEffect(() => {
+    let warning: ReturnType<typeof setTimeout> | undefined
+    function onMessage(e: MessageEvent) {
+      if (e.source !== window || e.origin !== window.location.origin || !isBridgeReply(e.data)) return
+      const reply = e.data
+      if (reply.state === 'present') {
+        if (bridgeSeen.current) return
+        bridgeSeen.current = true
+        setBridge('present')
+        say('Roll20 bridge connected.')
+      } else if (reply.state === 'sent') {
+        bridgeWarned.current = false
+      } else if (reply.state === 'failed' && !bridgeWarned.current) {
+        bridgeWarned.current = true
+        const text =
+          reply.reason === 'no-roll20'
+            ? 'No Roll20 game tab is open, so that stayed here.'
+            : 'The Roll20 bridge could not reach the game chat, so that stayed here.'
+        warning = setTimeout(() => say(text), 5000)
+      }
+    }
+    window.addEventListener('message', onMessage)
+    const hello: BridgeHello = { clatter: 'hello' }
+    window.postMessage(hello, window.location.origin)
+    return () => {
+      window.removeEventListener('message', onMessage)
+      clearTimeout(warning)
+    }
+  }, [say])
+
   // A link such as ?character=characters/persi-obsidian.json loads that file on
   // arrival, so one bookmark sets up a new device without pasting anything.
   const loadedFromUrl = useRef(false)
@@ -399,7 +439,7 @@ export default function App() {
 
   const announceOptions = { breakdown: settings.breakdown }
 
-  function finish(next: { state: RollerState; outcome: { text: string; result: unknown } }) {
+  function finish(next: { state: RollerState; outcome: Outcome }) {
     roller.current = next.state
     setActiveToggles(next.state.activeToggles)
     setInHand(next.state.inHand)
@@ -424,6 +464,11 @@ export default function App() {
       setHistory((h) => [{ id: nextId.current++, text: next.outcome.text }, ...h].slice(0, HISTORY_LIMIT))
     }
     say(next.outcome.text)
+    // Rolls and casts go to the table; hit points, gear, and questions stay here.
+    if (settings.sendToVtt && (next.outcome.result || next.outcome.cast)) {
+      const roll: BridgeRollMessage = { clatter: 'roll', version: BRIDGE_VERSION, text: roll20Message(character.name, next.outcome.text) }
+      window.postMessage(roll, window.location.origin)
+    }
   }
 
   function onSubmit(e: FormEvent) {
@@ -717,6 +762,20 @@ export default function App() {
             />
             <label htmlFor="set-assertive">Interrupt speech to announce results</label>
           </div>
+          <div className="field">
+            <input
+              id="set-vtt"
+              type="checkbox"
+              checked={settings.sendToVtt}
+              onChange={(e) => setSettings({ ...settings, sendToVtt: e.target.checked })}
+            />
+            <label htmlFor="set-vtt">Send each result to Roll20 through the Clatter bridge extension</label>
+          </div>
+          <p className="muted">
+            {bridge === 'present'
+              ? 'Roll20 bridge: connected. Rolls and casts appear in your open Roll20 game as chat cards.'
+              : 'Roll20 bridge: the extension is not installed in this browser. The README says how to add it.'}
+          </p>
         </section>
 
         <section aria-labelledby="help-h">
@@ -773,6 +832,11 @@ export default function App() {
             <li>
               Toggles such as Rage: press the button to keep it on, type rage to switch it, or add it to one roll:
               flail rage. Equipped items start on.
+            </li>
+            <li>
+              Roll20: with the Clatter bridge extension installed, every roll and cast you hear also appears in your
+              open Roll20 game as a chat card with your character's name, the total, and the breakdown. Settings has
+              the switch. If no game tab is open you are told once.
             </li>
             <li>Press Enter on the empty box to roll the last thing again. Type last to hear the last result again.</li>
             <li>Press slash anywhere to jump back to the roll box. Escape clears it.</li>

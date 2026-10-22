@@ -275,6 +275,8 @@ export interface Outcome {
   text: string
   /** Null when the text is a message (help, ambiguity, error) rather than a roll. */
   result: RollResult | null
+  /** True for a spell cast, which the table should see even when nothing was rolled. */
+  cast?: boolean
 }
 
 const toEffect = (tg: DerivedToggle): AttackEffect => ({
@@ -721,7 +723,7 @@ function castSpell(state: RollerState, r: TargetResolved, spell: DerivedSpell, c
   const concentrationChanged = s.concentration !== state.concentration
   const spent = s.slotsUsed !== state.slotsUsed || s.pactUsed !== state.pactUsed || s.uses !== state.uses
   const next = spent || keepToggles || concentrationChanged ? commit(state, s, { toggles: keepToggles, concentration: concentrationChanged }) : s
-  return { state: next, outcome: { text: full, result } }
+  return { state: next, outcome: { text: full, result, cast: true } }
 }
 
 export const HELP_TEXT =

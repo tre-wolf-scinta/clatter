@@ -42,6 +42,14 @@ If what you typed matches more than one thing, you hear the options instead of a
 
 Every roll is also a large button under a heading (Ability checks, Saving throws, Skills, Attacks, Other rolls), labeled with its modifier; each attack has a to-hit button and a damage button. A checkbox above the skills narrows them to the ones you are proficient in. Shift+Enter on a button rolls with advantage, Ctrl+Enter with disadvantage. Press slash anywhere to jump back to the roll box.
 
+## Roll20
+
+With the Clatter bridge extension installed in Chrome, every roll and cast you hear also appears in your open Roll20 game as a chat card: your character's name and what was rolled, the total, and the breakdown. Hit points, gear, and questions stay in Clatter. The extension lives in the `extension` folder of this repo and does nothing but carry messages from the Clatter tab to the Roll20 tab; it reads nothing else on either page, stores nothing, and never talks to the internet.
+
+To install it: open `chrome://extensions`, turn on the Developer mode switch, press "Load unpacked", and choose the `extension` folder. Chrome will say the extension can read and change data on `app.roll20.net` and on Clatter's address, which is the permission it needs to type into the chat box. When Clatter next loads it says "Roll20 bridge connected.", and the Settings section says the same. The checkbox under it, "Send each result to Roll20 through the Clatter bridge extension", turns sending off. If no Roll20 game tab is open when you roll, Clatter tells you once, a few seconds later so it does not cut off the roll.
+
+Roll20 is sent the card as a `&{template:default}` message, the same syntax a player can type into chat, so it needs no API, no subscription, and no change to the game. The dice are rolled in Clatter; the card shows the numbers, as a Beyond20 roll does.
+
 ## Your character
 
 Choose "Load or edit character", then paste JSON into the box (or use "Browse for a character file") and press Load. The format:
