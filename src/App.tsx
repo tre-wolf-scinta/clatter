@@ -30,7 +30,7 @@ import {
   type Resolved,
   type RollerState,
 } from './engine/commands'
-import { formatDiceExpr } from './engine/dice'
+import { formatDiceExpr, setAvoidRepeats } from './engine/dice'
 import { freshHitPoints, type HitPoints } from './engine/hitpoints'
 import { usesLeft } from './engine/readouts'
 import type { Mode } from './engine/roll'
@@ -60,8 +60,16 @@ interface Settings {
   proficientOnly: boolean
   /** Post each roll and cast to the open Roll20 game through the bridge extension. */
   sendToVtt: boolean
+  /** Streak protection: a die never shows the face it showed last time. */
+  avoidRepeats: boolean
 }
-const DEFAULT_SETTINGS: Settings = { breakdown: true, assertive: true, proficientOnly: false, sendToVtt: true }
+const DEFAULT_SETTINGS: Settings = {
+  breakdown: true,
+  assertive: true,
+  proficientOnly: false,
+  sendToVtt: true,
+  avoidRepeats: true,
+}
 
 interface HistoryEntry {
   id: number
@@ -300,6 +308,10 @@ export default function App() {
   useEffect(() => {
     saveJSON(SETTINGS_KEY, settings)
   }, [settings])
+
+  useEffect(() => {
+    setAvoidRepeats(settings.avoidRepeats)
+  }, [settings.avoidRepeats])
 
   useEffect(() => {
     roller.current = { ...roller.current, stickyMode, activeToggles }
@@ -765,6 +777,20 @@ export default function App() {
             />
             <label htmlFor="set-assertive">Interrupt speech to announce results</label>
           </div>
+          <div className="field">
+            <input
+              id="set-streaks"
+              type="checkbox"
+              checked={settings.avoidRepeats}
+              onChange={(e) => setSettings({ ...settings, avoidRepeats: e.target.checked })}
+            />
+            <label htmlFor="set-streaks">Never roll the same number twice in a row</label>
+          </div>
+          <p className="muted">
+            Each die remembers its last face and rolls again if it comes up. Every face stays equally likely over
+            time; only back-to-back repeats go. Strictly fair dice have repeats, so turn this off for a lab, on for
+            a game.
+          </p>
           <div className="field">
             <input
               id="set-vtt"

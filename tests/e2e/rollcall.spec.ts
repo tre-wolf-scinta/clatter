@@ -360,6 +360,18 @@ test('the spells HUD: one heading per level with the slots, Enter casts and clos
   await expect(result(page)).toContainText(/Long rest\. 38 of 38 hit points\. Spell slots recovered\./)
 })
 
+test('streak protection is on by default and a d20 never repeats back to back', async ({ page }) => {
+  const box = page.getByRole('checkbox', { name: 'Never roll the same number twice in a row' })
+  await expect(box).toBeChecked()
+  const items = page.getByRole('region', { name: 'Roll history' }).getByRole('listitem')
+  for (let i = 0; i < 25; i++) await type(page, 'd20')
+  await expect(items).toHaveCount(25)
+  const totals = (await items.allTextContents()).map((t) => Number(/1d20: (\d+)\./.exec(t)?.[1]))
+  for (let i = 1; i < totals.length; i++) expect(totals[i], `roll ${i}`).not.toBe(totals[i - 1])
+  await box.uncheck()
+  await expectNoAxeViolations(page, 'streak protection off')
+})
+
 test('no axe violations on the initial page', async ({ page }) => {
   await expectNoAxeViolations(page, 'initial page')
 })

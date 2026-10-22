@@ -34,6 +34,7 @@ Type what the DM asked for and press Enter. Focus stays in the box; the result i
 - Advantage or disadvantage: `stealth adv`, `stealth dis`. Or press the Advantage or Disadvantage toggle to apply it to every roll until you turn it off.
 - Bonuses: `history +2`, `stealth +1d4` (Guidance), `wis save +1d4` (Bless), `-1d4` (Bane).
 - Raw dice: `2d6+3`, `d20`, `8d6`.
+- Streak protection, on by default: a die never shows the face it showed last time. Each die size remembers its last face and rolls again from the other faces when it comes up, so back-to-back repeats go away while every face stays equally likely over time. Only the first die of a roll is held back, so `2d6` can still roll doubles. This is a game-feel choice, not a fairness one: strictly fair dice do repeat about one roll in twenty on a d20. The Settings checkbox "Never roll the same number twice in a row" turns it off.
 - Custom rolls from your character file: `sneak` (Sneak Attack).
 - Enter on the empty box rolls the last thing again (handy for Extra Attack); so does `again`, and `adv` or `again +2` repeats it with a change. `last` speaks the last result again without rolling.
 - `help` lists all of this.

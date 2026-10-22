@@ -5,7 +5,9 @@ import {
   type Rng,
   doubleDice,
   formatDiceExpr,
+  rememberFace,
   rollDie,
+  rollDiePlain,
   rollExpr,
   secureRng,
 } from './dice'
@@ -23,8 +25,11 @@ export interface D20Roll {
 }
 
 export function rollD20(mode: Mode, rng: Rng = secureRng): D20Roll {
-  const dice = mode === 'normal' ? [rollDie(20, rng)] : [rollDie(20, rng), rollDie(20, rng)]
+  // With streak protection, the first die avoids the last d20 that counted; the second is plain,
+  // and the die that counts this time is what the next roll avoids.
+  const dice = mode === 'normal' ? [rollDie(20, rng)] : [rollDie(20, rng), rollDiePlain(20, rng)]
   const kept = mode === 'disadvantage' ? Math.min(...dice) : Math.max(...dice)
+  rememberFace(20, kept)
   return { mode, dice, kept, natural20: kept === 20, natural1: kept === 1 }
 }
 

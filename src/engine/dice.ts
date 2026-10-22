@@ -20,8 +20,45 @@ export function queueRng(values: number[]): Rng {
   return () => values[Math.min(i++, values.length - 1)]
 }
 
+/**
+ * Streak protection. When on, a die of a given size never shows the face it
+ * showed last time: the first die of each roll that would repeat is drawn again
+ * from the other faces. The owner's call (2026-10-22): over a campaign the dice
+ * are fair either way, but in a session of six rolls a back-to-back repeat
+ * feels like a loaded die, and this is a game. Every face stays equally likely
+ * overall; only immediate repeats go. Off by default so the engine's tests see
+ * plain dice; the app switches it on from Settings.
+ */
+let avoidRepeats = false
+const lastFace = new Map<number, number>()
+
+export function setAvoidRepeats(on: boolean): void {
+  avoidRepeats = on
+  lastFace.clear()
+}
+
+/** A plain die: every face equally likely, no memory. */
+export const rollDiePlain = (sides: number, rng: Rng = secureRng): number => Math.floor(rng() * sides) + 1
+
+/** Records the face a roll ended on, so the next roll of that die size can avoid it. */
+export function rememberFace(sides: number, face: number): void {
+  if (avoidRepeats) lastFace.set(sides, face)
+}
+
+/**
+ * One die, the first of a roll. With streak protection on it avoids the face
+ * this die size showed last time by drawing from the other faces instead.
+ */
 export function rollDie(sides: number, rng: Rng = secureRng): number {
-  return Math.floor(rng() * sides) + 1
+  const face = rollDiePlain(sides, rng)
+  if (!avoidRepeats || sides < 2 || lastFace.get(sides) !== face) {
+    rememberFace(sides, face)
+    return face
+  }
+  const other = rollDiePlain(sides - 1, rng)
+  const picked = other >= face ? other + 1 : other
+  rememberFace(sides, picked)
+  return picked
 }
 
 export interface DiceTerm {
@@ -104,7 +141,9 @@ export interface DiceResult {
 export function rollExpr(expr: DiceExpr, rng: Rng = secureRng): DiceResult {
   let total = expr.flat
   const terms = expr.terms.map((t) => {
-    const values = Array.from({ length: t.count }, () => rollDie(t.sides, rng))
+    // Only the first die of a term is held back from repeating, so 2d6 can still roll doubles.
+    const values = Array.from({ length: t.count }, (_, i) => (i === 0 ? rollDie(t.sides, rng) : rollDiePlain(t.sides, rng)))
+    rememberFace(t.sides, values[values.length - 1])
     total += t.sign * values.reduce((a, b) => a + b, 0)
     return { ...t, values }
   })
