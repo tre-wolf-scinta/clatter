@@ -591,10 +591,13 @@ export default function App() {
               onKeyDown={(e) => {
                 if (e.key === 'Escape') setInput('')
                 // Explicit submit: implicit form submission needs a trusted key event,
-                // and some assistive tools dispatch synthetic ones.
+                // and some assistive tools dispatch synthetic ones. A held key
+                // auto-repeats Enter many times a second; only the press counts, so
+                // one press is one roll (an Enter held for a second once rolled
+                // damage seventy times).
                 if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
                   e.preventDefault()
-                  e.currentTarget.form?.requestSubmit()
+                  if (!e.repeat) e.currentTarget.form?.requestSubmit()
                 }
               }}
               autoFocus

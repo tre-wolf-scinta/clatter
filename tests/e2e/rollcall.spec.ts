@@ -86,6 +86,11 @@ test('history lists rolls newest first; empty Enter rolls again; last repeats wi
   await type(page, 'last')
   await expect(result(page)).toContainText(latest)
   await expect(items).toHaveCount(3)
+  // A held Enter key auto-repeats; only the press rolls, never the repeats.
+  await rollBox(page).dispatchEvent('keydown', { key: 'Enter', repeat: true, bubbles: true })
+  await rollBox(page).dispatchEvent('keydown', { key: 'Enter', repeat: true, bubbles: true })
+  await rollBox(page).dispatchEvent('keydown', { key: 'Enter', repeat: false, bubbles: true })
+  await expect(items).toHaveCount(4)
 })
 
 test('slash returns focus to the roll box', async ({ page }) => {
