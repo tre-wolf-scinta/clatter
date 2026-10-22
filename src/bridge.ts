@@ -42,12 +42,14 @@ const clean = (s: string): string => s.replace(/[{}|]/g, ' ').replace(/\s+/g, ' 
  * name "Persi: Natural 20! Stealth check", Total "30", Rolled "a 20 plus 10 from modifiers".
  */
 export function roll20Message(character: string, announcement: string): string {
-  const text = announcement.trim()
+  // "Natural 1." is spoken as its own sentence before the roll; it belongs in the card's name.
+  const lead = /^Natural 1\. /.exec(announcement.trim())
+  const text = lead ? announcement.trim().slice(lead[0].length) : announcement.trim()
   const end = text.indexOf('. ')
   const first = (end === -1 ? text : text.slice(0, end)).replace(/\.$/, '')
   const rest = (end === -1 ? '' : text.slice(end + 2)).replace(/^You rolled /, '').replace(/\.$/, '').trim()
   const colon = first.indexOf(': ')
-  const name = colon === -1 ? first : first.slice(0, colon)
+  const name = `${lead ? 'Natural 1. ' : ''}${colon === -1 ? first : first.slice(0, colon)}`
   const total = colon === -1 ? '' : first.slice(colon + 2)
   const fields = [`{{name=${clean(`${character}: ${name}`)}}}`]
   if (total) fields.push(`{{Total=${clean(total)}}}`)

@@ -12,6 +12,9 @@ describe('roll20Message', () => {
     expect(roll20Message('Persi', 'Critical hit! Flail: 22 bludgeoning damage.')).toBe(
       '&{template:default} {{name=Persi: Critical hit! Flail}} {{Total=22 bludgeoning damage}}',
     )
+    expect(roll20Message('Persi', 'Natural 1. Stealth check: 11. You rolled a 1 plus 10 from modifiers.')).toBe(
+      '&{template:default} {{name=Persi: Natural 1. Stealth check}} {{Total=11}} {{Rolled=a 1 plus 10 from modifiers}}',
+    )
     expect(roll20Message('Thalia', 'Charm Person: Wisdom save DC 12. Level 1 slots: 2 of 3 left.')).toBe(
       '&{template:default} {{name=Thalia: Charm Person}} {{Total=Wisdom save DC 12}} {{Rolled=Level 1 slots: 2 of 3 left}}',
     )

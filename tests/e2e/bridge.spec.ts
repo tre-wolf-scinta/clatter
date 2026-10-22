@@ -83,7 +83,7 @@ test('a roll in Clatter lands in the Roll20 chat as a card, and the setting turn
   const messages = roll20.locator('#textchat .content .message')
   await expect(messages).toHaveCount(1)
   await expect(messages.first()).toHaveText(
-    /^&\{template:default\} \{\{name=Thalia Brightwood: Stealth check\}\} \{\{Total=\d+\}\} \{\{Rolled=an? \d+ plus 10 from modifiers\}\}$/,
+    /^&\{template:default\} \{\{name=Thalia Brightwood: (Natural 20! |Natural 1\. )?Stealth check\}\} \{\{Total=\d+\}\} \{\{Rolled=an? \d+ plus 10 from modifiers\}\}$/,
   )
   await box.fill('charm person')
   await box.press('Enter')
