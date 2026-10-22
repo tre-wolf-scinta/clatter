@@ -172,4 +172,4 @@ Extra keys when you need them:
 - Every push to `main` runs the whole suite in GitHub Actions (`.github/workflows/deploy.yml`). Only if it passes does the workflow move the `release` branch to that commit; Render builds the site from `release` and publishes it at the address above, so a build that fails the accessibility checks never goes live. The same run publishes the GitHub Pages mirror.
 - The Render service was created once from the CLI, with no dashboard: `render services create --name clatter --type static_site --repo https://github.com/tre-wolf-scinta/clatter --branch release --build-command "npm ci && npm run build" --publish-directory dist`. `render.yaml` describes the same service; `render blueprints validate render.yaml` checks it. `.node-version` pins Node for Render and for CI.
 
-CLAUDE.md holds the accessibility rules the code is held to.
+CLAUDE.md holds the accessibility rules the code is held to. ROADMAP.md holds what is agreed but not built yet, with the design decisions already made for each item.

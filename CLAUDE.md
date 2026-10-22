@@ -71,3 +71,4 @@ The owner and primary user is blind and works with NVDA. Every UI string, and ev
 - Commit messages: one-line summary, then what changed for a screen-reader user, if anything did.
 - The character JSON schema is typed in `character.ts` (`CharacterFile`) and documented in README.md. Keep it forgiving: unknown keys ignored, names case-insensitive, both raw scores and explicit overrides accepted.
 - Windows note: the Bash tool truncates commands over about 8 KB. Write large files with the Write tool.
+- `ROADMAP.md` holds the features the owner has asked for but not yet had built, with the decisions already made for each. Add to it when a future feature is agreed; move an entry into README.md when it ships.
